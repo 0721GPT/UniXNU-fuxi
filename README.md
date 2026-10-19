@@ -18,4 +18,4 @@ Firmware: [uefi-sheng](https://github.com/UniXNU/uefi-sheng).
 
 Work in progress. Build with the `unixnu` driver of UniXNU (developed on macOS, other hosts untested), see its
 [building guide](https://github.com/UniXNU/UniXNU/blob/main/docs/building.md). This repository holds the sheng
-board configuration, drivers and scripts. Packaging of the userdata payload is under development.
+board configuration, drivers and scripts.
