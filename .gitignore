@@ -42,3 +42,4 @@ __pycache__/
 *.pem
 *.key
 .env
+local.toml
