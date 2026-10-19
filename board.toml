@@ -54,6 +54,7 @@ config = "sheng"                   # Resources/Configs/sheng.toml in the Mu-Sili
 dsc = "Platforms/Xiaomi/shengPkg/sheng.dsc"
 fd = "Build/shengPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
 preflight = ["scripts/check-sheng.py"]
+submodules = ["Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI", "Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl"]
 patches = ["Resources/MuPatches/Gic-Spurious.patch"]
 packages = [
   "{uefi}",
