@@ -30,6 +30,7 @@ expected original instruction first, and the tool refuses a kernel that does
 not match. Offsets are specific to the kernel built by build-xnu-4k-baseline.sh.
 """
 import argparse
+import os
 import shutil
 import struct
 import subprocess
@@ -178,7 +179,8 @@ def assemble_c(source, va, workdir, symbols):
     lld = shutil.which('ld.lld') or '/opt/homebrew/opt/llvm/bin/ld.lld'
     objcopy = shutil.which('llvm-objcopy') or '/opt/homebrew/opt/llvm/bin/llvm-objcopy'
     nm = shutil.which('llvm-nm') or '/opt/homebrew/opt/llvm/bin/llvm-nm'
-    font_dir = ROOT / 'uefi-sheng/Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib'
+    # UNIXNU_UEFI is the Mu-Silicium checkout when the unixnu driver runs this script.
+    font_dir = Path(os.environ.get('UNIXNU_UEFI') or ROOT / 'uefi-sheng') / 'Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib'
     obj, elf, binary = (workdir / name for name in ('panic.o', 'panic.elf', 'panic.bin'))
     definitions = []
     for macro, name, width in (('MAX_MEM', '_max_mem', 8),

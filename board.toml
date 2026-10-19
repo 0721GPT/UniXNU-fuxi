@@ -78,6 +78,76 @@ MEMORY_PROTECTION = "TRUE"
 SHIP_MODE = "FALSE"
 BUILDID_STRING = "sheng-research"
 
+# The ramdisk of the boot image: a FAT volume with the CrabApple config, the kernel, its device tree and
+# the optional trust cache and Data seed. The loader (DarwinBoot) is part of the firmware volume.
+[payload]
+volume = "SHENGESP"
+size_mib = 192
+loader = "firmware"
+title = "sheng first boot: source 4K XNU to console"
+dram_size = "0x80000000"             # SMEM RAM table observed on the device
+skip_setup_tool = "scripts/seed-data-skip-setup.py"   # used by --skip-setup
+panic_screen = true                  # patch panic() screen output into the payload copy of the kernel
+# The original static/System trust caches, and the owner trust bundle built around them.
+trust_cache_sha256 = [
+  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
+  "8900d6a93d7a59ce1a872a5c081e559f4240a218f97e12d44d22dda46644d68f",
+]
+kernel_args = [
+  "-v",
+  "serial=3",
+  "debug=0x14e",
+  "kt_fixed_zones=120",
+  "offline-legacy-register=1",
+  "offline-legacy-gop=1",
+  "offline-legacy-unit-scale=2",
+  "offline-legacy-pm=1",
+  "offline-legacy-validate=1",
+  "offline-legacy-transfer=1",
+  "offline-legacy-cpu-present=1",
+  "offline-hid-home=1",
+  "offline-hid-input=1",
+  "offline-legacy-phase=4",
+  "offline-mobile-graphics-client=1",
+  "offline-mobile-graphics-load=1",
+  "offline-apfs-load=1",
+  "boot-progress=2",
+  "-apfs_shared_datavolume",
+  "offline-key-events=1",
+  "native-ufs-root=1",
+  "native-ufs-stats-delay=30",
+  "sheng-pmgr=2",
+  "armcpu-diagnostics=1",
+  "sheng-disable-watchdogd=1",
+  "sheng-disable-jobs=com.apple.identityservicesd,com.apple.locationd,com.apple.CommCenter,com.apple.iconservices.iconservicesagent",
+  "boot-ui-focus=PreBoard",
+  "boot-ui-focus2=SpringBoard",
+  "boot-ui-focus3=backboardd",
+  "boot-ui-focus4=Setup",
+  "sheng-smp=1",
+  "sheng-cpufreq=3",
+  "sheng-touch=4",
+  "sheng-aks=1",
+  "sheng-gpu-power=9",
+  "boot-diag-resume=0",
+  "sheng-gpu-metal=1",
+  "sheng-gpu-addon=1",
+  "armcpu-spi-ipi=1",
+  "-no_slto_panic",
+  "ml-timeout-lock-panic-scale=40",
+  "sheng-touch-hid=1",
+]
+
+[payload.adt]
+tool = "scripts/make-sheng-adt.py"
+chip_id = "207"
+owned_memory_size = "0x130000000"
+root_match_volume_uuid = "04769D26-2CA0-4825-B443-E2E5F88300F2"
+cpu_regs = "0,0x100,0x200,0x300,0x400,0x500,0x600,0x700"
+packed_data_ramdisk = true
+ipad_identity = true
+unique_chip_id = "required"          # the platform seed is not stored in any repository
+
 # Image parameters come from the Mu-Silicium device config; [bootimg.image] would override them.
 
 # The stock ABL powers the panel off when the device tree has no splash region, so add it.
