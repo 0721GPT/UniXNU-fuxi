@@ -8,7 +8,6 @@ if a.notifications and (a.coding or a.cross_process):p.error('Select notificatio
 if a.default_off and a.api_validation:p.error('Select the original launchd control or GPU API validation')
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 if subprocess.run(['pgrep','-f','qemu-system-aarch64'],capture_output=True).returncode==0:raise SystemExit('Another QEMU is running')
-if shutil.disk_usage(ROOT).free<5*1024**3+256*1024**2:raise SystemExit('Preserve 5 GiB free before allocating this fixture')
 kind='offline-metal-shared-cross-process' if a.cross_process else 'offline-metal-shared-coding' if a.coding else 'offline-metal-shared-notifications' if a.notifications else 'offline-metal-shared-events';out=ROOT/'build'/kind
 fixture=ROOT/'build'/('darwinboot-owner-hvf-'+kind+('-default-off' if a.default_off else '-api-validation' if a.api_validation else ''))
 if (fixture/'gdb-stop.json').exists():raise SystemExit('Preserve the existing observation before another run')

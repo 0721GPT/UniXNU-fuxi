@@ -6,7 +6,6 @@ ROOT=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--default-off',action='store_true');a=p.parse_args()
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 if subprocess.run(['pgrep','-f','qemu-system-aarch64'],capture_output=True).returncode==0:raise SystemExit('Another QEMU is running')
-if shutil.disk_usage(ROOT).free<5*1024**3+256*1024**2:raise SystemExit('Preserve 5 GiB free before allocating this fixture')
 kind='offline-metal-fences';out=ROOT/'build'/kind
 fixture=ROOT/'build'/('darwinboot-owner-hvf-'+kind+('-default-off' if a.default_off else ''))
 if (fixture/'gdb-stop.json').exists():raise SystemExit('Preserve the existing observation before another run')

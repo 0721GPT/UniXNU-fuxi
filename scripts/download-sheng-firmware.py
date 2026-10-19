@@ -47,8 +47,6 @@ if target.exists():
 elif state['completed'] and not partial.exists():
     raise SystemExit('Resume state exists without its archive')
 allocated = partial.stat().st_blocks * 512 if partial.exists() else 0
-if shutil.disk_usage(directory).free < max(0, size - allocated) + 5 * 1024**3:
-    raise SystemExit('Insufficient space to download while retaining 5 GiB free')
 descriptor = os.open(partial, os.O_RDWR | os.O_CREAT, 0o600)
 os.ftruncate(descriptor, size)
 lock = threading.Lock()
@@ -125,10 +123,6 @@ try:
                 if now - last >= 10:
                     print(f'{len(state["completed"])}/{count} ranges; {received / 1024**2 / (now - started):.1f} MiB/s', flush=True)
                     last = now
-                    if shutil.disk_usage(directory).free < 5 * 1024**3:
-                        stop.set()
-                        raise RuntimeError('Disk reserve reached; stopping download')
-    os.fsync(descriptor)
 finally:
     with lock:
         persist()

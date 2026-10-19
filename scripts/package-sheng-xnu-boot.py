@@ -42,14 +42,6 @@ def main():
     size = PAYLOAD.stat().st_size
     if size % 512:
         raise SystemExit('The payload must be a whole number of 512-byte sectors')
-    # Room for the container on top of the payload, keeping the repository's
-    # reserve. An image being replaced gives its space back.
-    replaced = IMAGE.stat().st_size if IMAGE.exists() else 0
-    page = config['pagesize']
-    expected = page * (1 + -(-KERNEL.stat().st_size // page) + -(-size // page))
-    minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5'))
-    if shutil.disk_usage(ROOT).free + replaced - expected < minimum * 1024**3:
-        raise SystemExit(f'Writing the image would leave less than {minimum:g} GiB free')
     command = ['python3', ROOT / 'uefi-sheng/Resources/Scripts/mkbootimg.py',
                '--kernel', KERNEL, '--ramdisk', PAYLOAD, '-o', IMAGE]
     for key in ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version'):

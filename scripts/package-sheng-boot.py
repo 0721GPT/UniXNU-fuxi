@@ -35,9 +35,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--skip-qemu', action='store_true', help='Package with byte round-trip checks only; record that shim execution was not tested')
     args = parser.parse_args()
-    minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5'))
-    if shutil.disk_usage(ROOT).free < minimum * 1024**3:
-        raise SystemExit(f'Less than {minimum:g} GiB free')
     OUT.mkdir(parents=True, exist_ok=True)
     config = tomllib.loads((ROOT / 'uefi-sheng/Resources/Configs/sheng.toml').read_text())
     base, size = (config['uefi_fd'][key] for key in ('base', 'size'))

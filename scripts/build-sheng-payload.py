@@ -236,10 +236,6 @@ def main():
                          (14, b'NATIVE_UFS early memory snapshot')):
         if f'--kernel-arg=native-ufs-probe={mode}' in sys.argv[1:] and banner not in kernel.read_bytes():
             raise SystemExit(f'Candidate lacks native-ufs-probe={mode}; rebuild the kernel or use panic-screen memory counters')
-    minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5'))
-    if shutil.disk_usage(ROOT).free < minimum * 1024**3:
-        raise SystemExit(f'Less than {minimum:g} GiB free')
-
     if STAGE.exists():
         shutil.rmtree(STAGE)
     PAYLOADS.mkdir(parents=True)

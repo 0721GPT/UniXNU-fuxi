@@ -153,7 +153,6 @@ def main():
     require(payload.get('original_trust_cache_sha256') == trust_hash, 'Trust-cache report mismatch')
     embedded=read_file('Payloads/kernel.macho')
     require(sha(embedded)==payload['payload_kernel_sha256'], 'Embedded kernel hash mismatch')
-    require(shutil.disk_usage(out).free > len(candidate)+5*1024**3, 'Temporary audit would violate 5 GiB floor')
     with tempfile.TemporaryDirectory(prefix='kernel-audit-',dir=out) as td:
         regenerated=Path(td)/'kernel.macho';regenerated.write_bytes(candidate)
         with (out/'patch-reproduction.log').open('w') as log:

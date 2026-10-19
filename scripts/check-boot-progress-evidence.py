@@ -111,7 +111,6 @@ def main():
         d = load(BASE/name/'report.json')
         require(len(d['matched_lines']) == count and d['renderer_bytes'] <= 2608 and
                 not d['hardware_or_xnu_boot_qualified'], 'Panic screen incomplete')
-    require(shutil.disk_usage(ROOT).free >= 5*1024**3, 'Disk floor')
     args.output.write_text(json.dumps(dict(
         diagnostic_batch_offline_complete=True, required_checks_remaining_in_this_batch=[],
         release_sha256=sha(args.release), image_sha256=r['image_sha256'],

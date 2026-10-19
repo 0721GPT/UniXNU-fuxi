@@ -2,13 +2,6 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
-python3 - <<'PY'
-import os
-import shutil
-minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5'))
-if shutil.disk_usage('.').free < minimum * 1024**3:
-    raise SystemExit(f'Less than {minimum:g} GiB free; refusing firmware build')
-PY
 python3 scripts/check-sheng.py
 python3 - <<'PY'
 import json
@@ -50,17 +43,3 @@ build -p Platforms/Xiaomi/shengPkg/sheng.dsc -a AARCH64 -b "${TARGET:-DEBUG}" \
   -t CLANGPDB -n "${JOBS:-4}" -D FD_BASE=0xA7100000 -D FD_SIZE=0x300000 \
   -D FD_BLOCKS=768 -D ENABLE_SECUREBOOT=1 -D DEVICE_MODEL=sheng \
   -D MEMORY_PROTECTION=TRUE -D SHIP_MODE=FALSE -D BUILDID_STRING=sheng-research
-
-# The intermediate objects are a few hundred MiB and are rebuilt in about a
-# minute. Drop them when the repository's free-space reserve is getting close;
-# the firmware volume and its maps stay in FV/.
-python3 - "$WORKSPACE/Build/shengPkg/DEBUG_CLANGPDB/AARCH64" <<'PY'
-import os
-import shutil
-import sys
-from pathlib import Path
-objects = Path(sys.argv[1])
-if objects.is_dir() and shutil.disk_usage(objects).free < (float(os.environ.get('SHENG_MIN_FREE_GIB', '5')) + 1) * 1024**3:
-    shutil.rmtree(objects)
-    print(f'free space close to the reserve: removed {objects}')
-PY

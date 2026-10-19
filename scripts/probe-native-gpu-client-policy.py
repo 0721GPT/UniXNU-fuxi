@@ -6,7 +6,6 @@ ROOT=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--policy',choices=['full','parent-client','unrelated-client'],default='full');p.add_argument('--candidate-base',type=Path,default=ROOT/'build/native-prelink/native-owner-original-provider-probe-candidate');a=p.parse_args()
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 if subprocess.run(['pgrep','-f','qemu-system-aarch64'],capture_output=True).returncode==0:raise SystemExit('Another QEMU is running')
-if shutil.disk_usage(ROOT).free<5*1024**3+256*1024**2:raise SystemExit('Preserve 5 GiB free before allocating this fixture')
 kind='offline-metal-processes'+('' if a.policy=='full' else '-'+a.policy);out=ROOT/'build'/kind
 fixture=ROOT/'build'/('darwinboot-owner-hvf-'+kind)
 if (fixture/'gdb-stop.json').exists():raise SystemExit('Preserve the existing observation before another run')

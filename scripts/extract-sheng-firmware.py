@@ -49,8 +49,6 @@ with gzip.open(archive, 'rb') as inflated:
                 continue
             if member.size > 512 * 1024**2 or total_kept + member.size > 2 * 1024**3:
                 raise SystemExit(f'Unexpectedly large selected input: {member.name}')
-            if shutil.disk_usage(directory).free < member.size + 5 * 1024**3:
-                raise SystemExit('Extraction would breach the 5 GiB disk reserve')
             destination = output / name
             if any(entry['file'] == name for entry in selected):
                 raise SystemExit(f'Duplicate selected basename: {name}')

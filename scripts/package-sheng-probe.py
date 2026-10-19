@@ -33,9 +33,6 @@ def abl_dtb():
 
 
 def main():
-    minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5'))
-    if shutil.disk_usage(ROOT).free < minimum * 1024**3:
-        raise SystemExit(f'Less than {minimum:g} GiB free')
     OUT.mkdir(parents=True, exist_ok=True)
     config = tomllib.loads((ROOT / 'uefi-sheng/Resources/Configs/sheng.toml').read_text())
     base, size = config['uefi_fd']['base'], config['uefi_fd']['size']

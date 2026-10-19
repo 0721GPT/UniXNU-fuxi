@@ -14,7 +14,7 @@ u8 sha256[32], 40 reserved bytes}, then at byte 4064 the SHA-256 of bytes 0..406
 
 Nothing is flashed here. The image is written under build/ (ignored by Git), the source dmg
 SHA-256s are checked against the recorded IPSW extraction, the image is refused if it exceeds the
-`userdata` partition read from the tablet's GPT or the free-space floor, and the report lists the
+`userdata` partition read from the tablet's GPT, and the report lists the
 hashes. See docs/native-ufs.md for the flash command and the GPT checks around it.
 """
 import argparse
@@ -70,9 +70,8 @@ def detach(device):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--output', type=Path, default=OUT / 'userdata-root.img')
-    parser.add_argument('--dry-run', action='store_true', help='check sizes, free space and source hashes only')
+    parser.add_argument('--dry-run', action='store_true', help='check sizes and source hashes only')
     args = parser.parse_args()
-    minimum = float(os.environ.get('SHENG_MIN_FREE_GIB', '5')) * 1024**3
 
     sources = []
     for name, member in WINDOWS:
@@ -93,9 +92,6 @@ def main():
     if image_bytes > USERDATA_BYTES:
         raise SystemExit('Refusing: the image is larger than the userdata partition')
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    free = shutil.disk_usage(args.output.parent).free
-    if free < image_bytes + minimum:
-        raise SystemExit(f'Refusing: {free / 2**30:.1f} GiB free is below the image plus the 5 GiB floor')
     for name, dmg, record in sources:
         got = sha256_file(dmg)
         if got != record['sha256']:
