@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="UniXNU" src="assets/logo-light.svg" width="200">
+  </picture>
+</p>
+
 # UniXNU-sheng
 
 Device adaptation of [UniXNU](https://github.com/UniXNU/UniXNU) for the Xiaomi Pad 6S Pro (sheng, SM8550).
