@@ -108,7 +108,7 @@ if fd.stat().st_size != 0x300000:
     errors.append('FD does not match configured size')
 for guid in ('9b665204-a133-47a2-9396-9e2b370a4e25', '29b950cf-586d-49ea-9d71-f88645ccdaf6'):
     if guid not in files:
-        errors.append(f'Missing CrabApple component: {guid}')
+        errors.append(f'Missing UniXNU component: {guid}')
 report = {'fd_sha256': hashlib.sha256(fd.read_bytes()).hexdigest(), 'fd_bytes': fd.stat().st_size,
           'ffs_files': len(files), 'volumes': len(volumes), 'vendor_modules_checked': len(selected),
           'apriori_guids': len(apriori), 'dangling_apriori_guids': dangling,

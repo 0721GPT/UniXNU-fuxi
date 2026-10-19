@@ -47,7 +47,7 @@ for label in ('exit','bad-input','no-trust','default-off'):
         require(bytes.fromhex(d['stack_pointer_memory']['0']['bytes']).split(b'\0')[0]==b'air-native','Actual refused process identity')
     else:
         require(d['original_launchd_main_executed'] and d['followed_main_entry']['first_instruction_completed'] and int(d['pstate'],16)&31==0 and d['direct_user_commpage_shifts']=={'fffff4025:1':12,'fffff4037:1':12},'Default-off original launchd actually executes at native-4K EL0')
-        config=(path.parent/'esp/EFI/CrabApple/crabapple.toml').read_text()
+        config=(path.parent/'esp/EFI/UniXNU/unixnu.toml').read_text()
         require('offline-air-init' not in config,'Default-off does not select own compiler')
     checkpoints[label]=dict(sha256=sha(path),actual_tcr=r['TCR_EL1'],stop_symbol=d['stop_symbol'])
 result=dict(process_sha256=build['process_sha256'],candidate_sha256=plan['candidate_sha256'],manifest_sha256=sha(manifest),

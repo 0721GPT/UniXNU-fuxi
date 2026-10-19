@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+UNIXNU_ROOT=${UNIXNU_ROOT:-$ROOT/../UniXNU}
 cd "$ROOT"
 python3 scripts/check-sheng.py
 python3 - <<'PY'
@@ -10,11 +11,11 @@ if json.loads(Path('build/sheng/check.json').read_text())['missing_vendor_inputs
     raise SystemExit('Import verified sheng firmware inputs before building')
 PY
 export WORKSPACE=$ROOT/uefi-sheng
-export EDK_TOOLS_PATH=$ROOT/crabapple/Mu_Basecore/BaseTools
+export EDK_TOOLS_PATH=$UNIXNU_ROOT/package/Mu_Basecore/BaseTools
 export CONF_PATH=$ROOT/.cache/uefi-sheng-conf
 export CLANG_BIN=${CLANG_BIN:-$ROOT/.cache/toolchain/}
 export PYTHON_COMMAND=python3
-export PACKAGES_PATH=$ROOT/uefi-sheng:$ROOT/uefi-sheng/Platforms/Xiaomi:$ROOT/crabapple:$ROOT/drivers/DarwinBoot:$ROOT/crabapple/Mu_Basecore:$ROOT/uefi-sheng/Common/Mu:$ROOT/uefi-sheng/Common/Mu_OEM_Sample:$ROOT/uefi-sheng/Silicon/Qualcomm:$ROOT/uefi-sheng/Silicon/Silicium:$ROOT/uefi-sheng/Silicium-ACPI:$ROOT/uefi-sheng/Silicium-ACPI/Platforms/Xiaomi:$ROOT/uefi-sheng/Silicium-ACPI/Silicon/Qualcomm
+export PACKAGES_PATH=$ROOT/uefi-sheng:$ROOT/uefi-sheng/Platforms/Xiaomi:$UNIXNU_ROOT/package:$ROOT/drivers/DarwinBoot:$UNIXNU_ROOT/package/Mu_Basecore:$ROOT/uefi-sheng/Common/Mu:$ROOT/uefi-sheng/Common/Mu_OEM_Sample:$ROOT/uefi-sheng/Silicon/Qualcomm:$ROOT/uefi-sheng/Silicon/Silicium:$ROOT/uefi-sheng/Silicium-ACPI:$ROOT/uefi-sheng/Silicium-ACPI/Platforms/Xiaomi:$ROOT/uefi-sheng/Silicium-ACPI/Silicon/Qualcomm
 export PATH=$EDK_TOOLS_PATH/BinWrappers/PosixLike:$EDK_TOOLS_PATH/Source/C/bin:$PATH
 mkdir -p "$CONF_PATH"
 for NAME in target tools_def build_rule; do
@@ -24,7 +25,7 @@ for NAME in target tools_def build_rule; do
 done
 # Board patches for the shared Mu base checkout. They are applied only for the
 # build and always reverted, so the checkout stays clean (as upstream does).
-MU_BASE=$ROOT/crabapple/Mu_Basecore
+MU_BASE=$UNIXNU_ROOT/package/Mu_Basecore
 APPLIED_PATCHES=()
 revert_patches() {
   for PATCH in "${APPLIED_PATCHES[@]:-}"; do

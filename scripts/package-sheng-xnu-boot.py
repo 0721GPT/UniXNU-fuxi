@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Pack the sheng UEFI candidate and the CrabApple payload into one boot image.
+"""Pack the sheng UEFI candidate and the UniXNU payload into one boot image.
 
 The v0 container written by package-sheng-boot.py carries gzip(BootShim + FD)
-plus the appended DTB. This script adds the payload FAT volume (CrabApple
+plus the appended DTB. This script adds the payload FAT volume (UniXNU
 config, DarwinBoot, the 4 KiB source XNU and its ADT) as the image's ramdisk.
 The stock ABL copies a v0 ramdisk to memory, records it in /chosen, and the
 firmware's ShengBootMemoryDxe publishes it as a read-only block device, so no

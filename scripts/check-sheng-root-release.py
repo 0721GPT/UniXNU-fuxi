@@ -131,8 +131,8 @@ def main():
                 and sha(dtb)==fw_report['dtb_sha256'], 'Embedded shim/FD/DTB differ from checked firmware')
     fat=str(args.image.resolve())+'@@'+str(offset)
     def read_file(name):
-        return subprocess.check_output(['mtype','-i',fat,'::EFI/CrabApple/'+name],timeout=30)
-    config_bytes=read_file('crabapple.toml')
+        return subprocess.check_output(['mtype','-i',fat,'::EFI/UniXNU/'+name],timeout=30)
+    config_bytes=read_file('unixnu.toml')
     config=tomllib.loads(config_bytes.decode())
     adt=read_file('Payloads/kernel.macho.adt')
     require(sha(adt)==payload['adt_sha256'], 'Embedded ADT hash mismatch')

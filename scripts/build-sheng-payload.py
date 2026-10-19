@@ -2,13 +2,13 @@
 """Build the sheng first-boot userdata payload and validate its boot chain.
 
 The payload is a single FAT32 volume (the exact ESP layout every offline
-CrabApple -> DarwinBoot -> XNU run qualified: CrabApple.efi, DarwinBoot.efi,
+UniXNU -> DarwinBoot -> XNU run qualified: UniXNU.efi, DarwinBoot.efi,
 the unmodified source 4 KiB kernel with its sheng hardware ADT sidecar, and
-the auto-boot crabapple.toml). Delivery model per the user's instruction:
+the auto-boot unixnu.toml). Delivery model per the user's instruction:
 the user flashes this image to the device's userdata partition with fastboot
 at test time; nothing is written to the device from this host. On hardware
 the stock chain UFSDxe -> PartitionDxe (GPT name "userdata") -> FatDxe
-mounts it and CrabApple enumerates it as a normal volume - no custom
+mounts it and UniXNU enumerates it as a normal volume - no custom
 firmware driver is needed and the FD stays as committed.
 
 Kernel-in-boot.img is physically impossible: the stock ABL kernel window is
@@ -18,9 +18,9 @@ BootShim + UEFI FD.
 
 Validation (all offline):
  1. A GPT test disk is synthesized with an EFI System Partition holding only
-    CrabApple.efi (mirroring the FD-embedded CrabApple of the hardware boot)
+    UniXNU.efi (mirroring the FD-embedded UniXNU of the hardware boot)
     and a partition NAMED "userdata" holding the payload FAT image. QEMU's
-    edk2 firmware boots CrabApple from the ESP; CrabApple must discover the
+    edk2 firmware boots UniXNU from the ESP; UniXNU must discover the
     config on the userdata-named partition, auto-boot the XNU entry and
     DarwinBoot must reach "exiting boot services" - the same boundary every
     standing green probe observes before kernel entry.
@@ -41,12 +41,13 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+UNIXNU_ROOT = Path(os.environ.get('UNIXNU_ROOT', ROOT.parent / 'UniXNU'))
 OUT = ROOT / 'build/sheng/boot'
 STAGE = OUT / 'payload-fat'
-PAYLOADS = STAGE / 'EFI/CrabApple/Payloads'
+PAYLOADS = STAGE / 'EFI/UniXNU/Payloads'
 KERNEL = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf'
 DARWINBOOT = ROOT / 'build/DarwinBoot/DEBUG_CLANGPDB/AARCH64/DarwinBoot.efi'
-CRABAPPLE = ROOT / 'crabapple/Build/Out/AARCH64-DEBUG/CrabApple.efi'
+UNIXNU = UNIXNU_ROOT / 'package/Build/Out/AARCH64-DEBUG/UniXNU.efi'
 # SMEM item 402 observed on hardware: the low bank ends at 0x100000000.
 # This is board metadata, not an allocation grant; DarwinBoot owns its window
 # through UEFI AllocatePages. See docs/native-ufs.md for reserved/high ranges.
@@ -134,7 +135,7 @@ def make_fat_image(stage_dir, image):
 
 
 def build_gpt_test_disk(esp_dir, payload_image):
-    """GPT disk via sgdisk: p1 = ESP with CrabApple only, p2 named userdata."""
+    """GPT disk via sgdisk: p1 = ESP with UniXNU only, p2 named userdata."""
     import re
     block = 512
     sgdisk = '/opt/homebrew/opt/gptfdisk/bin/sgdisk'
@@ -194,7 +195,7 @@ def main():
     # --kernel=PATH selects another kernel Mach-O, e.g. a native-prelink candidate that
     # carries the original components the native kernel links against.
     kernel = next((Path(a.split('=', 1)[1]) for a in sys.argv[1:] if a.startswith('--kernel=')), KERNEL)
-    # --data-ramdisk=PATH: explicit mutable scratch APFS Data seed, loaded as the CrabApple initrd.
+    # --data-ramdisk=PATH: explicit mutable scratch APFS Data seed, loaded as the UniXNU initrd.
     data_ramdisk = next((Path(a.split('=', 1)[1]) for a in sys.argv[1:] if a.startswith('--data-ramdisk=')), None)
     trust_cache = next((Path(a.split('=', 1)[1]) for a in sys.argv[1:]
                         if a.startswith('--original-trust-cache=')), None)
@@ -222,7 +223,7 @@ def main():
         trust_cache = owner_trust
     if data_ramdisk and not data_ramdisk.exists():
         raise SystemExit(f'Missing Data seed: {data_ramdisk}')
-    required = (kernel,) if firmware_loader else (kernel, DARWINBOOT, CRABAPPLE)
+    required = (kernel,) if firmware_loader else (kernel, DARWINBOOT, UNIXNU)
     for path in required:
         if not path.exists():
             raise SystemExit(f'Missing qualified artifact: {path}')
@@ -271,7 +272,7 @@ def main():
                     *[v for a in sys.argv[1:] if a.startswith(('--cpu-regs=', '--psci-method=')) for v in (a.split('=', 1)[0], a.split('=', 1)[1])],
                     *[v for a in sys.argv[1:] if a.startswith('--owned-memory-size=') for v in ('--owned-memory-size', a.split('=', 1)[1])]], check=True)
     INITRD_LINE = 'initrd = "Payloads/scratch-data.img"\n' if data_ramdisk else ''
-    (STAGE / 'EFI/CrabApple/crabapple.toml').write_text(f'''version = 1
+    (STAGE / 'EFI/UniXNU/unixnu.toml').write_text(f'''version = 1
 [boot]
 timeout = 3
 default = "xnu"
@@ -309,25 +310,25 @@ path = "Payloads/kernel.macho"
     if _ESP_STAGE.exists():
         shutil.rmtree(_ESP_STAGE)
     (_ESP_STAGE / 'EFI/BOOT').mkdir(parents=True)
-    shutil.copyfile(CRABAPPLE, _ESP_STAGE / 'EFI/BOOT/BOOTAA64.EFI')
+    shutil.copyfile(UNIXNU, _ESP_STAGE / 'EFI/BOOT/BOOTAA64.EFI')
 
     esp_lba, ud_lba = build_gpt_test_disk(_ESP_STAGE, FAT_IMAGE)
 
     log = OUT / 'payload-chain.log'
     log.unlink(missing_ok=True)
-    subprocess.run(['python3', ROOT / 'crabapple/Scripts/qemu-run.py', _ESP_STAGE,
+    subprocess.run(['python3', UNIXNU_ROOT / 'package/Scripts/qemu-run.py', _ESP_STAGE,
                     '--log', log, '--cpus', '1', '--timeout', '180',
                     '--disk', TEST_DISK,
-                    '--expect', r'CRABAPPLE: config: loaded \\EFI\\CrabApple\\crabapple.toml',
+                    '--expect', r'UNIXNU: config: loaded \\EFI\\UniXNU\\unixnu.toml',
                     '--expect', r'DARWINBOOT: loader v2 installed EL1',
-                    '--expect', r'CRABAPPLE: boot: entry \'xnu\'',
+                    '--expect', r'UNIXNU: boot: entry \'xnu\'',
                     '--expect', r'DARWINBOOT: inputs validated; exiting boot services',
                     '--reject', r'DARWINBOOT[^\n]*FAIL', '--reject', r'ASSERT'],
                    check=True)
 
     report = {
         'kernel_sha256': digest(KERNEL), 'kernel_bytes': KERNEL.stat().st_size,
-        'darwinboot_sha256': digest(DARWINBOOT), 'crabapple_sha256': digest(CRABAPPLE),
+        'darwinboot_sha256': digest(DARWINBOOT), 'unixnu_sha256': digest(UNIXNU),
         'adt_sha256': digest(PAYLOADS / 'kernel.macho.adt'),
         'kernel_args': KERNEL_ARGS, 'dram_size': hex(DRAM_SIZE),
         'userdata_image': str(FAT_IMAGE.relative_to(ROOT)),
