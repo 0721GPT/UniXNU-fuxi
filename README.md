@@ -25,6 +25,27 @@ Firmware: [uefi-sheng](https://github.com/UniXNU/uefi-sheng).
 
 Build with the `unixnu` driver of [UniXNU](https://github.com/UniXNU/UniXNU).
 
+## Device support
+
+The boot chain reaches XNU. This table records user-facing device support from the operating system.
+
+| Feature | State | Notes |
+| --- | --- | --- |
+| Touch | ✅ | Novatek NT36532E |
+| Display | ✅ | |
+| Wi-Fi | ❌ | |
+| Bluetooth | ❌ | |
+| Camera | ❌ | |
+| GPU | ❌ | |
+| USB | ❌ | |
+| Audio | ❌ | |
+| Sensors | ❌ | |
+| Battery driver | ❌ | |
+| MiPPS | ❌ | |
+| Suspend and resume | ❌ | |
+
+✅ available, ❌ not available.
+
 ## License
 
 BSD-2-Clause-Patent. See [LICENSE](LICENSE).
