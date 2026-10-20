@@ -4,6 +4,7 @@
 #include <kern/task.h>
 #include <kern/thread.h>
 #include <kern/simple_lock.h>
+#include <kern/clock.h>
 #include <kern/misc_protos.h>
 #include <machine/machine_routines.h>
 #include <arm/thread.h>
@@ -14,8 +15,34 @@
 #include "BootUiTraceCore.h"
 #include "BootUiTraceDetails.h"
 static struct bt_entry samples[BT_MAX_THREADS];
+// Hot threads: the context-switch rate of each sampled thread between two snapshots, so a thread that is woken hundreds of times a second
+// shows even though every single stack sample finds it idle in mach_msg.
+static uint64_t sample_tid[BT_MAX_THREADS];static uint32_t sample_cs[BT_MAX_THREADS];
+struct bt_prev {uint64_t tid,at;uint32_t cs;};
+#define BT_HOT 4
+#define BT_HOT_MIN_RATE 50
+#define BT_HOT_FRAMES 18
+#define BT_KFRAMES 12
+struct bt_hotrow {unsigned rate;char role;int peer;uint64_t tid,pc,lr,frames[BT_HOT_FRAMES],kernel[BT_KFRAMES];unsigned state,hint;int pri;uint64_t event;};
+static uint64_t sample_k[BT_MAX_THREADS][BT_KFRAMES],sample_event[BT_MAX_THREADS];
+static unsigned sample_state[BT_MAX_THREADS],sample_hint[BT_MAX_THREADS];static int sample_pri[BT_MAX_THREADS];
+// Where a blocked thread sits in the kernel: the link register and frame chain its context switch saved (the thread is not running while
+// it is blocked; for a running one the chain is merely stale, and every step stays inside its kernel stack).
+static void bt_kernel_stack(thread_t thread,uint64_t *out) {
+ memset(out,0,BT_KFRAMES*sizeof(uint64_t));
+ if(!thread->kernel_stack)return;
+ const uint64_t low=(uint64_t)thread->kernel_stack,high=low+(uint64_t)kernel_stack_size;
+ thread_kernel_state_t state=thread_get_kernel_state(thread);
+ uint64_t fp=state->machine.ss.fp;out[0]=state->machine.ss.lr;
+ for(unsigned i=1;i<BT_KFRAMES && fp>=low && fp+16<=high && !(fp&15);++i) {
+  const uint64_t *frame=(const uint64_t *)fp;out[i]=frame[1];
+  const uint64_t next=frame[0];if(next<=fp)break;fp=next;
+ }
+}
 #define BT_ROLES 4
 static struct bt_main draft_main[BT_ROLES],published_main[BT_ROLES];
+static struct bt_prev hot_prev[BT_ROLES][BT_MAX_THREADS];
+static struct bt_hotrow hot_draft[BT_ROLES][BT_HOT],hot_published[BT_ROLES][BT_HOT];
 static struct bt_groups draft,published;
 static unsigned trace_lock;
 static char draft_names[BT_ROLES][32],published_names[BT_ROLES][32];
@@ -26,7 +53,7 @@ unsigned boot_ui_trace_ready,boot_ui_trace_groups,boot_ui_trace_threads,boot_ui_
 volatile unsigned boot_ui_trace_phase,boot_ui_trace_index;
 
 void boot_ui_trace_begin(void) {
- memset(draft_main,0,sizeof(draft_main));
+ memset(draft_main,0,sizeof(draft_main));memset(hot_draft,0,sizeof(hot_draft));
  memset(&draft,0,sizeof(draft));memset(draft_pid,0,sizeof(draft_pid));
  memset(draft_slide,0,sizeof(draft_slide));memset(draft_names,0,sizeof(draft_names));
  draft_busy=0;draft_omitted=0;boot_ui_trace_phase=1;
@@ -62,7 +89,7 @@ void boot_ui_trace_task(task_t task,unsigned index,int pid,const char *name,unsi
   if(!simple_lock_try(&thread->sched_lock,&thread_lck_grp)){++draft_busy;ml_set_interrupts_enabled(irq);continue;}
   arm_saved_state_t *state=thread->machine.upcb;
   if(state && is_saved_state64(state)) {
-   struct bt_entry *e=&samples[count++];memset(e,0,sizeof(*e));
+   struct bt_entry *e=&samples[count];memset(e,0,sizeof(*e));sample_tid[count]=thread->thread_id;sample_cs[count]=thread->c_switch;bt_kernel_stack(thread,sample_k[count]);sample_event[count]=(uint64_t)thread->wait_event;sample_state[count]=(unsigned)thread->state;sample_hint[count]=(unsigned)thread->block_hint;sample_pri[count]=thread->sched_pri;++count;
    e->index=visited;e->role=role?"BSTU"[role&3]:(!strcmp(name,"chronod")?'C':(!strcmp(name,"liveactivitiesd")?'L':'B'));
    e->pc=(uint64_t)get_saved_state_pc(state);e->lr=(uint64_t)get_saved_state_lr(state);
    e->fp=(uint64_t)get_saved_state_fp(state);
@@ -93,17 +120,115 @@ void boot_ui_trace_task(task_t task,unsigned index,int pid,const char *name,unsi
   if(!samples[i].error)bt_walk(&samples[i],read_user,map);
   bt_add(&draft,&samples[i]);
  }
+ {
+  // Rates against the previous snapshot of the same thread; the four hottest of the role are kept with their stacks.
+  const uint64_t now=mach_absolute_time();
+  for(unsigned i=0;i<count;++i) {
+   struct bt_prev *slot=NULL,*free_slot=NULL;
+   for(unsigned k=0;k<BT_MAX_THREADS;++k) {
+    if(hot_prev[role][k].tid==sample_tid[i]){slot=&hot_prev[role][k];break;}
+    if(!free_slot && !hot_prev[role][k].tid)free_slot=&hot_prev[role][k];
+   }
+   if(slot && now>slot->at) {
+    uint64_t ns=0;absolutetime_to_nanoseconds(now-slot->at,&ns);
+    const uint32_t switches=sample_cs[i]-slot->cs;
+    const unsigned rate=ns?(unsigned)((uint64_t)switches*UINT64_C(1000000000)/ns):0;
+    if(rate>=BT_HOT_MIN_RATE) {
+     unsigned at=BT_HOT;
+     for(unsigned h=0;h<BT_HOT;++h)if(rate>hot_draft[role][h].rate){at=h;break;}
+     if(at<BT_HOT) {
+      for(unsigned h=BT_HOT-1;h>at;--h)hot_draft[role][h]=hot_draft[role][h-1];
+      struct bt_hotrow *row=&hot_draft[role][at];memset(row,0,sizeof(*row));
+      row->rate=rate;row->role=samples[i].role;row->peer=samples[i].peer;row->tid=sample_tid[i];
+      row->pc=samples[i].pc;row->lr=samples[i].lr;
+      memcpy(row->kernel,sample_k[i],sizeof(row->kernel));row->event=sample_event[i];row->state=sample_state[i];row->hint=sample_hint[i];row->pri=sample_pri[i];
+      {struct bt_entry deep=samples[i];deep.error=0;bt_walk_n(&deep,read_user,map,row->frames,BT_HOT_FRAMES);}   /* deeper than the grouped 8 frames: names the thread */
+     }
+    }
+   }
+   if(!slot)slot=free_slot?free_slot:&hot_prev[role][i%BT_MAX_THREADS];
+   slot->tid=sample_tid[i];slot->cs=sample_cs[i];slot->at=now;
+  }
+ }
  if(space)is_release(space);
  vm_map_deallocate(map);boot_ui_trace_phase=1;
 }
 void boot_ui_trace_publish(void) {
  if(!__atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE)) {
-  published=draft;memcpy(published_main,draft_main,sizeof(draft_main));memcpy(published_pid,draft_pid,sizeof(draft_pid));
+  published=draft;memcpy(published_main,draft_main,sizeof(draft_main));memcpy(hot_published,hot_draft,sizeof(hot_draft));memcpy(published_pid,draft_pid,sizeof(draft_pid));
   memcpy(published_slide,draft_slide,sizeof(draft_slide));memcpy(published_names,draft_names,sizeof(draft_names));
   published_busy=draft_busy;published_omitted=draft_omitted;
   __atomic_store_n(&trace_lock,0,__ATOMIC_RELEASE);
  }
  boot_ui_trace_phase=0;
+}
+// The live banner's view of one traced role (1 = the boot-ui-focus2 process, SpringBoard): with detail, the main thread's saved registers and
+// its first 24 frame-pointer return addresses, then every other thread group; without, a name row and every group including the main
+// thread's. A group row is its Mach peer (pid of the receiver it sends to, -1 none), PC, LR and first 7 frames; groups without a user frame
+// chain (idle workqueue threads) are left out. Raw hex user addresses; cache+ is the shared cache slide and image the main executable's
+// header. Returns the number of rows written (0 while the trace is being published).
+unsigned boot_ui_trace_role_rows(unsigned role,char rows[][120],unsigned max,unsigned detail) {
+ if(role>=BT_ROLES || max<6 || __atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE))return 0;
+ unsigned n=0;const struct bt_main *m=&published_main[role];const struct bt_entry *e=&m->entry;const char c=bt_role_char(role,m);
+ if(m->pid && detail) {
+  snprintf(rows[n++],120,"STK%c p%d cache+%x image=%llx pc=%llx lr=%llx fperr=%u peer=%d/e%u",c,m->pid,m->slide,m->image,e->pc,e->lr,m->error,
+   e->peer,e->peer_code);
+  snprintf(rows[n++],120,"STK%c trap=%lld x0=%llx x1=%llx x2=%llx x3=%llx x4=%llx",c,(long long)e->trap,e->regs[0],e->regs[1],e->regs[2],
+   e->regs[3],e->regs[4]);
+  for(unsigned row=0;row<3;++row) {
+   int at=snprintf(rows[n],120,"STK%c %02u",c,row*8+1);
+   for(unsigned i=0;i<8 && at>0 && at<119;++i)at+=snprintf(rows[n]+at,120-at," %llx",m->frames[row*8+i]);
+   ++n;
+  }
+ } else if(published_pid[role]) {
+  snprintf(rows[n++],120,"STK%c %.31s p%u cache+%x image=%llx",c,published_names[role],published_pid[role],published_slide[role],m->image);
+ }
+ for(unsigned g=0;g<published.count && n<max;++g) {
+  const struct bt_entry *t=&published.entries[g];
+  if(t->role!=c || (detail && t->index==1 && t->count==1) || !t->frames[0])continue;   // a main group of several threads names the others
+  int at=snprintf(rows[n],120,"STK%c#%u x%u p%d %llx %llx",t->role,t->index,t->count,t->peer,t->pc,t->lr);
+  for(unsigned i=0;i<7 && at>0 && at<119;++i)at+=snprintf(rows[n]+at,120-at," %llx",t->frames[i]);
+  ++n;
+ }
+ __atomic_store_n(&trace_lock,0,__ATOMIC_RELEASE);
+ return n;
+}
+// The hottest threads of every traced role (context switches per second between the last two snapshots, at least BT_HOT_MIN_RATE): rate,
+// thread id, Mach peer, PC, LR and the first frames. Returns the number of rows (0 while the trace is being published).
+unsigned boot_ui_trace_hot_rows(char rows[][120],unsigned max) {
+ if(__atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE))return 0;
+ unsigned n=0;
+ for(unsigned role=0;role<BT_ROLES;++role)
+  for(unsigned h=0;h<BT_HOT && n<max;++h) {
+   const struct bt_hotrow *r=&hot_published[role][h];if(!r->rate)continue;
+   int at=snprintf(rows[n],120,"HOT%c p%u tid=%llx sw/s=%u peer=%d pc=%llx lr=%llx",r->role?r->role:'?',published_pid[role],r->tid,r->rate,r->peer,r->pc,r->lr);
+   for(unsigned i=0;i<4 && at>0 && at<119;++i)at+=snprintf(rows[n]+at,120-at," %llx",r->frames[i]);
+   ++n;
+   if(n<max) {
+    int more=snprintf(rows[n],120,"HOT+ %llx",r->tid);
+    for(unsigned i=4;i<BT_HOT_FRAMES && more>0 && more<110;++i)more+=snprintf(rows[n]+more,120-more," %llx",r->frames[i]);
+    ++n;
+   }
+   if(n<max && r->kernel[0]) {
+    int kernel=snprintf(rows[n],120,"HOTK %llx st=%x hint=%u pri=%d ev=%llx",r->tid,r->state,r->hint,r->pri,r->event);
+    for(unsigned i=0;i<BT_KFRAMES && kernel>0 && kernel<105;++i)kernel+=snprintf(rows[n]+kernel,120-kernel," %llx",r->kernel[i]);
+    ++n;
+   }
+  }
+ __atomic_store_n(&trace_lock,0,__ATOMIC_RELEASE);
+ return n;
+}
+// The process a traced role is waiting on: the first of its thread groups that sends a Mach message to another task (peer above launchd,
+// not itself). 0 = none, -1 = the trace is being published (keep the previous answer).
+int boot_ui_trace_role_peer(unsigned role) {
+ if(role>=BT_ROLES || __atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE))return -1;
+ const char c=bt_role_char(role,&published_main[role]);int own=(int)published_pid[role],found=0;
+ for(unsigned g=0;g<published.count && !found;++g) {
+  const struct bt_entry *t=&published.entries[g];
+  if(t->role==c && t->peer>1 && t->peer!=own && !t->peer_code)found=t->peer;
+ }
+ __atomic_store_n(&trace_lock,0,__ATOMIC_RELEASE);
+ return own?found:0;
 }
 void boot_ui_trace_snapshot(unsigned seconds) {
  if(__atomic_exchange_n(&trace_lock,1,__ATOMIC_ACQUIRE))return;

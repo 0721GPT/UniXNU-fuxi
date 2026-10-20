@@ -24,6 +24,7 @@ char boot_process_rows[10][120];
 extern void boot_ui_trace_begin(void) __attribute__((weak_import));
 extern void boot_ui_trace_task(task_t,unsigned,int,const char *,unsigned) __attribute__((weak_import));
 extern void boot_ui_trace_publish(void) __attribute__((weak_import));
+extern int boot_ui_trace_role_peer(unsigned) __attribute__((weak_import));
 
 volatile unsigned boot_process_passes,boot_process_seen;
 volatile unsigned boot_process_attempts,boot_process_busy;
@@ -33,17 +34,32 @@ static unsigned chrono_focus_initialized;
 static char focus_name[32],focus2_name[32],focus3_name[32],focus4_name[32];
 static unsigned trace_slot[10]={0,1,1};
 static const char *targets[]={"launchd","backboardd","SpringBoard","PreBoard","runningboardd","lsd","keybagd","cfprefsd","containermanagerd","kernel_task"};
+// boot-ui-follow=1: follow a wait chain by pid. follow_pid[0] is the process the SpringBoard slot sends to (traced in slot 4, role U),
+// follow_pid[1] the one that process sends to (traced in slot 1, role B); 0 = nothing to follow.
+static unsigned follow_enabled;
+static int follow_pid[2];
+// SpringBoard and backboardd keep their own slots (2, 3) even when the chain leads to them.
+static int followed_slot(proc_t p) {
+ int pid=proc_pid(p);const char *name=proc_best_name(p);
+ if(!strcmp(name,targets[2]) || !strcmp(name,targets[3]))return 10;
+ if(follow_pid[0]>0 && pid==follow_pid[0])return 4;
+ if(follow_pid[1]>0 && pid==follow_pid[1])return 1;
+ return 10;
+}
 static int selected(proc_t p,void *arg) {
  (void)arg;
  const char *name=proc_best_name(p);
  for(unsigned i=0;i<10;++i)if(!strcmp(name,targets[i]))return 1;
- return proc_pid(p)==0;
+ return proc_pid(p)==0 || followed_slot(p)<10;
 }
 static int capture(proc_t p,void *arg) {
  (void)arg;
  const char *name=proc_best_name(p);unsigned index=10;
  for(unsigned i=0;i<10;++i)if(!strcmp(name,targets[i])){index=i;break;}
  if(proc_pid(p)==0)index=9;
+ if(followed_slot(p)<10)index=followed_slot(p);
+ // A slot the chain uses belongs to the followed process only (runningboardd/PreBoard would mix their threads into its trace).
+ else if((index==4 && follow_pid[0]>0) || (index==1 && follow_pid[1]>0))index=10;
  if(index==10)return PROC_RETURNED;
  task_t task=proc_task(p);
  if(!task || !task_lock_try(task)) {
@@ -69,7 +85,7 @@ static int capture(proc_t p,void *arg) {
  }
  unsigned total=(unsigned)task->thread_count,slide=task->task_shared_region_slide;task_unlock(task);
  snprintf(capture_rows[index],120,"%.15s p%d n%u r%u w%u b%u t%u s%x/%d W%llx C%llx U%llx +%x",
-  targets[index],proc_pid(p),total,running,waiting,busy,sampled,state,priority,wait,continuation,userPC,slide);
+  name,proc_pid(p),total,running,waiting,busy,sampled,state,priority,wait,continuation,userPC,slide);
  if(trace_slot[index] && boot_ui_trace_task)boot_ui_trace_task(task,index,proc_pid(p),name,slide);
  capture_seen=capture_seen+1;return PROC_RETURNED;
 }
@@ -96,7 +112,18 @@ void boot_process_capture(void) {
   if(PE_parse_boot_argn("boot-ui-focus4",focus4_name,sizeof(focus4_name)) && focus4_name[0]) {
    focus4_name[sizeof(focus4_name)-1]=0;targets[4]=focus4_name;trace_slot[4]=1;
   }
+  PE_parse_boot_argn("boot-ui-follow",&follow_enabled,sizeof(follow_enabled));
+  if(follow_enabled==1)trace_slot[4]=trace_slot[1]=1;
   chrono_focus_initialized=1;
+ }
+ // The previous pass's traces name the next processes to follow (a busy trace keeps the previous choice).
+ if(follow_enabled==1 && boot_ui_trace_role_peer) {
+  int first=boot_ui_trace_role_peer(1),second=boot_ui_trace_role_peer(3);
+  if(first>=0) {
+   if(first!=follow_pid[0])second=0;   // slot 4's trace belongs to the previous choice
+   follow_pid[0]=first;
+   if(second>=0)follow_pid[1]=first>0 && second!=first?second:0;
+  }
  }
  for(unsigned i=0;i<10;++i)snprintf(capture_rows[i],120,"%.17s: absent from this process pass",targets[i]);
  capture_seen=0;

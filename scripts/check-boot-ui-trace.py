@@ -15,7 +15,12 @@ prefix=r'''
 #include "BootUiTraceDetails.h"
 #define KERN_SUCCESS 0
 struct saved {uint64_t pc,lr,fp;bool valid;};typedef struct saved arm_saved_state_t;
-struct thread {bool sched_lock;struct {struct saved *upcb;} machine;struct thread *next;};typedef struct thread *thread_t;
+struct thread {bool sched_lock;struct {struct saved *upcb;} machine;struct thread *next;uint64_t thread_id;uint32_t c_switch;uint64_t kernel_stack;uint64_t wait_event;int state;uint8_t block_hint;int16_t sched_pri;};typedef struct thread *thread_t;
+struct kstate {struct {struct {uint64_t fp,lr,sp;} ss;} machine;};typedef struct kstate *thread_kernel_state_t;
+static struct kstate fake_kstate;static uint64_t kernel_stack_size=16384;static uint64_t fake_kstack[2048] __attribute__((aligned(16)));
+#define thread_get_kernel_state(t) (&fake_kstate)
+static uint64_t fake_now=1000;static uint64_t mach_absolute_time(void){return fake_now;}
+static void absolutetime_to_nanoseconds(uint64_t t,uint64_t *ns){*ns=t;}
 struct task;
 struct port {bool locked;int pid;};typedef struct port *ipc_port_t;
 #define IP_NULL NULL
@@ -94,6 +99,12 @@ int main(void){
  assert(strstr(boot_ui_trace_label,"T=p122 U=p27")&&boot_ui_trace_pages==3);
  boot_ui_trace_snapshot(8*(boot_ui_trace_pages-1));assert(strstr(boot_ui_trace_rows[0],"MAIN T p122")&&strstr(boot_ui_trace_rows[7],"MAIN U p27"));
  boot_ui_trace_snapshot(8*(boot_ui_trace_pages-2));assert(strstr(boot_ui_trace_rows[0],"MAIN B p140")&&strstr(boot_ui_trace_rows[7],"MAIN S p110"));
+ {struct {char rows[12][120];char guard[16];} live;memset(&live,'Z',sizeof(live));unsigned got=boot_ui_trace_role_rows(1,live.rows,12,1);
+  for(unsigned i=0;i<got;++i){assert(strlen(live.rows[i])<120);puts(live.rows[i]);}for(unsigned i=0;i<16;++i)assert(live.guard[i]=='Z');
+  assert(got==6&&strstr(live.rows[0],"STKS p110")&&strstr(live.rows[1],"STKS trap=")&&strstr(live.rows[2],"STKS 01")&&strstr(live.rows[4],"STKS 17")&&strstr(live.rows[5],"STKS#1 x2 p-1"));
+  assert(boot_ui_trace_role_rows(1,live.rows,5,1)==0&&!trace_lock);trace_lock=1;assert(boot_ui_trace_role_rows(1,live.rows,12,1)==0&&boot_ui_trace_role_peer(1)==-1);trace_lock=0;
+  got=boot_ui_trace_role_rows(3,live.rows,12,0);for(unsigned i=0;i<got;++i)puts(live.rows[i]);
+  assert(got==2&&strstr(live.rows[0],"STKU SpringBoard p27 cache+1000")&&strstr(live.rows[1],"STKU#1 x2")&&boot_ui_trace_role_peer(3)==0&&!trace_lock);}
  struct {char row[60];char guard[16];} bounded;memset(&bounded,'Z',sizeof(bounded));struct bt_entry maximum={.role='S',.index=64,.count=64,.pc=(UINT64_C(1)<<39)-1,.lr=(UINT64_C(1)<<39)-1,.error=3};for(unsigned i=0;i<8;++i)maximum.frames[i]=maximum.pc;bt_format(&maximum,0,bounded.row);assert(strlen(bounded.row)<60);for(unsigned i=0;i<16;++i)assert(bounded.guard[i]=='Z');
  setup(65);boot_ui_trace_begin();boot_ui_trace_task(&task,1,57,"backboardd",0);assert(draft.threads==64&&draft_omitted==1&&!map.refs);
  setup(3);task.busy=true;boot_ui_trace_begin();boot_ui_trace_task(&task,1,57,"backboardd",0);assert(draft_busy==1&&!draft.threads);task.busy=false;
@@ -107,6 +118,18 @@ int main(void){
  for(unsigned i=0;i<8;++i){boot_ui_trace_snapshot(i);assert(!memcmp(before,boot_ui_trace_rows,sizeof(before)));assert(boot_ui_trace_phase==2&&boot_ui_trace_index==1);}
  assert(!pthread_mutex_lock(&gate));hold=false;assert(!pthread_cond_broadcast(&changed));assert(!pthread_mutex_unlock(&gate));assert(!pthread_join(worker,NULL));assert(!map.refs);
  trace_lock=1;boot_ui_trace_snapshot(9);assert(!memcmp(before,boot_ui_trace_rows,sizeof(before)));trace_lock=0;
+ /* Hot threads: a thread whose context-switch count grew by 800 in one second shows with its rate and stack; a quiet one (and the first sighting) does not. */
+ {setup(2);threads[0].thread_id=11;threads[1].thread_id=12;threads[0].c_switch=100;threads[1].c_switch=50;fake_now=5000000000ull;
+  boot_ui_trace_begin();boot_ui_trace_task(&task,1,57,"backboardd",0);boot_ui_trace_publish();
+  char hot[8][120];assert(boot_ui_trace_hot_rows(hot,8)==0);
+  fake_now+=1000000000ull;threads[0].c_switch=900;threads[1].c_switch=52;
+  /* A kernel stack for thread 0: link register, then a two-frame chain inside the stack. */
+  threads[0].kernel_stack=(uint64_t)fake_kstack;fake_kstate.machine.ss.lr=0xfffffff0071a0000ull;fake_kstate.machine.ss.fp=(uint64_t)&fake_kstack[8];
+  fake_kstack[8]=(uint64_t)&fake_kstack[16];fake_kstack[9]=0xfffffff0071a1111ull;fake_kstack[16]=0;fake_kstack[17]=0xfffffff0071a2222ull;
+  boot_ui_trace_begin();boot_ui_trace_task(&task,1,57,"backboardd",0);boot_ui_trace_publish();
+  unsigned rows=boot_ui_trace_hot_rows(hot,8);for(unsigned i=0;i<rows;++i)puts(hot[i]);
+  assert(rows==3 && strstr(hot[0],"HOTB p57 tid=b sw/s=800") && strstr(hot[0],"pc=1e3dbcb58") && !strncmp(hot[1],"HOT+ b ",7) &&
+   !strncmp(hot[2],"HOTK b st=",10) && strstr(hot[2]," fffffff0071a0000 fffffff0071a1111 fffffff0071a2222") && !trace_lock);}
  puts("PASS: actual UI capture/formatter; lossless address tokens, distinct tasks, grouping, 64-thread cap, VM/IPC reads outside task locks, map/space/port reference/lock/IRQ restoration, main32/image/peer/lookup failures, invalid chains, copy failure, pages and blocked-reader isolation");
 }
 '''

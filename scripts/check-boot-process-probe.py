@@ -22,13 +22,14 @@ struct task {struct thread *threads;unsigned thread_count,task_shared_region_sli
 struct proc {const char *name;int pid;task_t task;};typedef struct proc *proc_t;
 static struct proc procs[4];static unsigned procCount;static bool interrupts=true;
 static int thread_lck_grp;
-static unsigned host_focus;
+static unsigned host_focus,host_follow;
 static char host_focus_name[32],host_focus2_name[32],host_focus3_name[32],host_focus4_name[32];
 static int __attribute__((unused)) PE_parse_boot_argn(const char *name,void *p,int size){
  if(!strcmp(name,"boot-ui-focus")){assert(size==32);memcpy(p,host_focus_name,32);return host_focus_name[0]!=0;}
  if(!strcmp(name,"boot-ui-focus2")){assert(size==32);memcpy(p,host_focus2_name,32);return host_focus2_name[0]!=0;}
  if(!strcmp(name,"boot-ui-focus3")){assert(size==32);memcpy(p,host_focus3_name,32);return host_focus3_name[0]!=0;}
  if(!strcmp(name,"boot-ui-focus4")){assert(size==32);memcpy(p,host_focus4_name,32);return host_focus4_name[0]!=0;}
+ if(!strcmp(name,"boot-ui-follow")){assert(size==4);memcpy(p,&host_follow,4);return host_follow!=0;}
  assert(!strcmp(name,"boot-ui-chrono")&&size==4);memcpy(p,&host_focus,4);return host_focus!=0;}
 static const char *proc_best_name(proc_t p){return p->name;}
 static int proc_pid(proc_t p){return p->pid;}
@@ -48,6 +49,8 @@ void boot_ui_trace_begin(void){}
 static unsigned trace_calls[10];
 void boot_ui_trace_task(task_t t,unsigned i,int p,const char *n,unsigned s){assert(!t->busy && interrupts && i>=1 && i<=4);++trace_calls[i];(void)p;(void)n;(void)s;}
 void boot_ui_trace_publish(void){}
+static int host_peer[4];
+int boot_ui_trace_role_peer(unsigned role){assert(role<4);return host_peer[role];}
 static void continuation(void){}
 static void capture_and_snapshot(void){boot_process_capture();boot_process_snapshot();}
 int main(void){
@@ -71,6 +74,16 @@ int main(void){
  chrono_focus_initialized=0;host_focus=0;strcpy(host_focus_name,"configd");strcpy(host_focus2_name,"nehelper");strcpy(host_focus3_name,"profiled");strcpy(host_focus4_name,"SpringBoard");
  memset(trace_calls,0,sizeof(trace_calls));procs[0]=(struct proc){"configd",140,&task};procs[1]=(struct proc){"nehelper",110,&task};procs[2]=(struct proc){"profiled",122,&task};procs[3]=(struct proc){"SpringBoard",27,&task};procCount=4;
  boot_process_capture();assert(trace_calls[1]==1&&trace_calls[2]==1&&trace_calls[3]==1&&trace_calls[4]==1&&strstr(capture_rows[4],"SpringBoard p27")&&strstr(capture_rows[3],"profiled p122"));
+ chrono_focus_initialized=0;host_follow=1;strcpy(host_focus_name,"PreBoard");strcpy(host_focus2_name,"SpringBoard");strcpy(host_focus3_name,"backboardd");strcpy(host_focus4_name,"runningboardd");
+ procs[0]=(struct proc){"SpringBoard",26,&task};procs[1]=(struct proc){"lsd",100,&task};procs[2]=(struct proc){"cfprefsd",77,&task};procs[3]=(struct proc){"runningboardd",50,&task};procCount=4;
+ host_peer[1]=100;host_peer[3]=77;memset(trace_calls,0,sizeof(trace_calls));
+ boot_process_capture();assert(strstr(capture_rows[4],"lsd p100")&&strstr(capture_rows[1],"absent")&&trace_calls[4]==1&&trace_calls[1]==0&&trace_calls[2]==1);
+ boot_process_capture();assert(strstr(capture_rows[4],"lsd p100")&&strstr(capture_rows[1],"cfprefsd p77")&&trace_calls[4]==2&&trace_calls[1]==1);
+ host_peer[1]=-1;boot_process_capture();assert(strstr(capture_rows[4],"lsd p100")&&strstr(capture_rows[1],"cfprefsd p77"));
+ procs[2]=(struct proc){"backboardd",58,&task};host_peer[1]=100;host_peer[3]=58;boot_process_capture();boot_process_capture();
+ assert(strstr(capture_rows[3],"backboardd p58")&&strstr(capture_rows[1],"absent")&&strstr(capture_rows[2],"SpringBoard p26"));
+ host_peer[1]=0;boot_process_capture();boot_process_capture();assert(strstr(capture_rows[4],"runningboardd p50")&&strstr(capture_rows[2],"SpringBoard p26"));
+ host_follow=0;
  puts("PASS: actual process probe body; absent/present, task/thread busy, IRQ restoration, 128-thread bound, VM worker selection and fresh rows; kernel APIs substituted");
 }
 '''

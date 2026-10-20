@@ -43,6 +43,14 @@ extern volatile uint32_t native_adreno_method_stats[20][4] __attribute__((weak_i
 extern volatile uint64_t native_adreno_vm_phase_us[2][8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_reassert_ticks __attribute__((weak_import));
+extern volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak_import));
+// NativeAdrenoPublish.cpp: per process name that opened the GPU, and the processes that asked the Metal discovery for its plugin.
+struct native_adreno_client_record {char name[20]; uint32_t opens, refused, closes, slot, peak_mib, last_refusal;};
+extern struct native_adreno_client_record native_adreno_client_log[8] __attribute__((weak_import));
+struct native_adreno_asker_record {char name[20]; uint32_t reads;};
+extern struct native_adreno_asker_record native_adreno_metal_askers[12] __attribute__((weak_import));
 extern char native_gpu_coherence_row[120] __attribute__((weak_import));
 extern size_t boot_progress_profile_rows(char *, size_t) __attribute__((weak_import));
 extern volatile uint64_t native_gpu_idle_sleeps __attribute__((weak_import));
@@ -52,6 +60,7 @@ extern volatile uint32_t native_adreno_io_coherent __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern uint32_t native_gpu_perf_vote[2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pool_status __attribute__((weak_import));
+extern volatile uint32_t native_adreno_pool_wc __attribute__((weak_import));
 extern volatile uint64_t native_adreno_fence_phys __attribute__((weak_import));
 extern int (*native_adreno_dram_read32)(uint64_t, uint32_t *) __attribute__((weak_import));
 extern int (*native_adreno_cached_read32)(uint64_t, uint32_t *) __attribute__((weak_import));
@@ -306,10 +315,30 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     }
   }
   if (&native_adreno_pool_stats) {
-    char row[170];
-    snprintf(row, sizeof row, "[bo pool] %u MiB (last reserve status %x): %u BOs from it, %u fell back, in use %u MiB (peak %u) | scattered: %u BOs %u spans | import spans %u",
-             native_adreno_pool_stats[0], native_adreno_pool_status, native_adreno_pool_stats[1], native_adreno_pool_stats[2], native_adreno_pool_stats[3],
+    char row[200];
+    snprintf(row, sizeof row, "[bo pool] %u MiB (last reserve status %x, wc %x): %u BOs from it, %u fell back, in use %u MiB (peak %u) | scattered: %u BOs %u spans | import spans %u",
+             native_adreno_pool_stats[0], native_adreno_pool_status, &native_adreno_pool_wc ? native_adreno_pool_wc : 0, native_adreno_pool_stats[1], native_adreno_pool_stats[2], native_adreno_pool_stats[3],
              native_adreno_pool_stats[4], native_adreno_pool_stats[5], native_adreno_pool_stats[6], native_adreno_pool_stats[7]);
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // GPU clients: name opens/refused/closes, live slot (- none), highest GPU address its mappings reached (MiB), last refusal.
+  if (&native_adreno_client_log) {
+    char row[400];
+    size_t used = (size_t)snprintf(row, sizeof row, "[gpu clients]");
+    for (unsigned i = 0; i < 8 && native_adreno_client_log[i].name[0] && used < sizeof row; ++i) {
+      const struct native_adreno_client_record *r = &native_adreno_client_log[i];
+      char slot[8];
+      if (r->slot < 8) snprintf(slot, sizeof slot, "%u", r->slot); else snprintf(slot, sizeof slot, "-");
+      used += (size_t)snprintf(row + used, sizeof row - used, " %.19s %u/%u/%u s%s %uM r%x", r->name, r->opens, r->refused, r->closes, slot,
+                               r->peak_mib, r->last_refusal);
+    }
+    at = put(out, at, cap, row, sizeof row);
+  }
+  if (&native_adreno_metal_askers) {
+    char row[400];
+    size_t used = (size_t)snprintf(row, sizeof row, "[metal askers]");
+    for (unsigned i = 0; i < 12 && native_adreno_metal_askers[i].name[0] && used < sizeof row; ++i)
+      used += (size_t)snprintf(row + used, sizeof row - used, " %.19s:%u", native_adreno_metal_askers[i].name, native_adreno_metal_askers[i].reads);
     at = put(out, at, cap, row, sizeof row);
   }
   // The IO-coherence proof (GpuPowerProbe coherenceProbe) and the maintenance passes it saved: map, unmap, submission, completion.
@@ -321,6 +350,19 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              &native_adreno_coherent_skips ? native_adreno_coherent_skips[1] : 0, &native_adreno_coherent_skips ? native_adreno_coherent_skips[2] : 0,
              &native_adreno_coherent_skips ? native_adreno_coherent_skips[3] : 0,
              (unsigned long long)(&native_gpu_idle_sleeps ? native_gpu_idle_sleeps : 0), (unsigned long long)(&native_gpu_idle_spins ? native_gpu_idle_spins : 0));
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // The submissions' write-combine work: audits, IB lines compared and found dirty, pages set back to write-combined, the re-assertion's
+  // total time, and the CPU cache maintenance passes (count, total ms, MiB).
+  if (&native_adreno_wc_audit && &native_adreno_reassert_ticks && &native_adreno_cache_stats) {
+    uint64_t f = 0;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    if (!f) f = 19200000;
+    char row[200];
+    snprintf(row, sizeof row, "[wc] audited=%u lines=%u dirty=%u reset=%u reassert_ms=%llu | maintenance passes=%llu ms=%llu MiB=%llu",
+             native_adreno_wc_audit[0], native_adreno_wc_audit[1], native_adreno_wc_audit[2], native_adreno_wc_audit[5],
+             (unsigned long long)(native_adreno_reassert_ticks * 1000 / f), (unsigned long long)native_adreno_cache_stats[3],
+             (unsigned long long)(native_adreno_cache_stats[0] * 1000 / f), (unsigned long long)(native_adreno_cache_stats[1] >> 20));
     at = put(out, at, cap, row, sizeof row);
   }
   // CPU clusters and L3 as voted (CpuFreqProbe, refreshed every round) and the GPU's initial HFI perf/bandwidth vote.
