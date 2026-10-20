@@ -62,7 +62,7 @@ for _arg in sys.argv[1:]:
         KERNEL_ARGS += ' ' + _value
 FAT_IMAGE = OUT / 'sheng-userdata-payload.img'   # what the user flashes
 TEST_DISK = OUT / 'sheng-payload-testdisk.img'   # GPT fidelity disk for QEMU
-FAT_SIZE = '192m'   # int-151: ABL accepted a 257 MiB boot image but stayed in fastboot; 193 MiB images boot
+FAT_SIZE = os.environ.get('SHENG_FAT_SIZE', '192m')   # SHENG_FAT_SIZE=176m for an image that has to fit the boot partition (scripts/build-flash-image.sh)   # int-151: ABL accepted a 257 MiB boot image but stayed in fastboot; 193 MiB images boot
 GPT_TEST_DISK_SIZE = 512 * 1024 * 1024           # sparse-friendly container
 
 
@@ -228,7 +228,7 @@ def main():
         if not path.exists():
             raise SystemExit(f'Missing qualified artifact: {path}')
     # DarwinBoot copies the command line into a 1024-byte buffer and refuses a longer one with EFI_BAD_BUFFER_SIZE, after the image was already sent.
-    if len(KERNEL_ARGS) > 1000:
+    if len(KERNEL_ARGS) > 1016:
         raise SystemExit('Kernel command line is %d bytes; the boot loader accepts at most 1023. Drop arguments that equal their default.' % len(KERNEL_ARGS))
     check_native_root_boot_args(kernel, KERNEL_ARGS)
     # The handoff's rootauth3 candidate predates these source-level probes.
@@ -271,7 +271,29 @@ def main():
                     *(['--ipad-identity'] if '--ipad-identity' in sys.argv else []),
                     *[v for a in sys.argv[1:] if a.startswith(('--cpu-regs=', '--psci-method=')) for v in (a.split('=', 1)[0], a.split('=', 1)[1])],
                     *[v for a in sys.argv[1:] if a.startswith('--owned-memory-size=') for v in ('--owned-memory-size', a.split('=', 1)[1])]], check=True)
+    # The menu title names the build: the session tag (sheng-build-tag) when given, else the first digits of the kernel hash.
+    build_tag = re.search(r'(?:^| )sheng-build-tag=([A-Za-z0-9._-]+)', KERNEL_ARGS)
+    ENTRY_TITLE = (build_tag.group(1) if build_tag else digest(kernel)[:8])
     INITRD_LINE = 'initrd = "Payloads/scratch-data.img"\n' if data_ramdisk else ''
+    # Two entries: "Boot" keeps userdata as it is; "Install and boot" asks first (confirm, before anything is touched), then erases the
+    # Data store (sheng-data-reset: the seed starts over) and boots, skipping the Hello page (1) or showing it (2). The command line
+    # limit is 1016 bytes, so each choice is a single argument.
+    # The install boot does not need the unattended return to fastboot, so its line leaves out sheng-autoreset (room for the reset argument).
+    INSTALL_ARGS = re.sub(r' sheng-autoreset=[0-9]+', '', KERNEL_ARGS)
+    for value in ('1', '2'):
+        if len((INSTALL_ARGS + ' sheng-data-reset=' + value).encode()) > 1016:
+            raise SystemExit(f'the install entry command line is {len((INSTALL_ARGS + " sheng-data-reset=" + value).encode())} bytes, the limit is 1016')
+    INSTALL_ENTRY = f'''
+[[entry]]
+id = "install"
+title = "Install and boot ({ENTRY_TITLE})"
+confirm = "ERASE all iPadOS user data and install again?"
+confirm_titles = ["Erase Data, skip Hello, boot", "Erase Data, show Hello, boot"]
+confirm_args = ["sheng-data-reset=1", "sheng-data-reset=2"]
+type = "xnu"
+path = "Payloads/kernel.macho"
+{INITRD_LINE}args = "{INSTALL_ARGS}"
+'''
     (STAGE / 'EFI/UniXNU/unixnu.toml').write_text(f'''version = 1
 [boot]
 timeout = 3
@@ -281,11 +303,11 @@ autoload = false
 {'' if firmware_loader else '[[driver]]' + chr(10) + 'path = "Payloads/DarwinBoot.efi"'}
 [[entry]]
 id = "xnu"
-title = "sheng first boot: source 4K XNU to console"
+title = "Boot ({ENTRY_TITLE})"
 type = "xnu"
 path = "Payloads/kernel.macho"
 {INITRD_LINE}args = "{KERNEL_ARGS}"
-''')
+{INSTALL_ENTRY}''')
 
     make_fat_image(STAGE, FAT_IMAGE)
     kernel_stage_sha = digest(PAYLOADS / 'kernel.macho')
