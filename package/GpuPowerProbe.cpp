@@ -61,6 +61,8 @@ extern "C" {
 #include "NativeAdrenoGmuContext.h"
 #include "NativeAdrenoGpuContext.h"
 #include "NativeAdrenoRing.h"
+#include "NativeAdrenoMemory.h"
+#include "NativeAdrenoVm.h"
 #include "NativeAdrenoUserClient.h"
 #include <IOKit/IOUserClient.h>
 #include <IOKit/IOMemoryDescriptor.h>
@@ -124,6 +126,9 @@ extern "C" volatile uint32_t armcpu_gic_diag_stage __attribute__((weak));
 extern "C" void armcpu_sgi_selfprobe(uint64_t *out) __attribute__((weak));
 extern "C" volatile uint32_t armcpu_core_timer[8], armcpu_core_sgi[8], armcpu_gic_boot[8];
 extern "C" IOService *native_adreno_published_service() __attribute__((weak));
+extern "C" volatile uint32_t native_adreno_wc_enabled;
+extern "C" volatile uint32_t native_adreno_pool_mib;
+extern "C" volatile uint64_t native_adreno_fence_phys;
 extern "C" const uint8_t native_adreno_sqe_firmware_image[] __attribute__((weak));
 extern "C" const uint64_t native_adreno_sqe_firmware_image_size __attribute__((weak));
 extern "C" const uint8_t native_adreno_zap_image[] __attribute__((weak));
@@ -132,6 +137,7 @@ extern "C" const uint8_t native_adreno_firmware_image[] __attribute__((weak));
 extern "C" const uint64_t native_adreno_firmware_image_size __attribute__((weak));
 extern "C" ShengGmuDbStatus ShengGmuCommandDbInputs(const uint8_t *, size_t, uint32_t, ShengGmuVoteInputs *) __attribute__((weak));
 extern "C" AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *, AdrenoHfiStartupConfig *) __attribute__((weak));
+extern "C" unsigned ShengGmuPerfVote(unsigned, unsigned *) __attribute__((weak));
 
 extern "C" {
 extern char boot_progress_ext[8][48];
@@ -314,6 +320,7 @@ constexpr uint32_t kG2hClr = kGmuReg(0x1f991), kG2hInfo = kGmuReg(0x1f992), kG2h
 constexpr uint32_t kH2gSet = kGmuReg(0x1f994), kGxStatus = kGmuReg(0x1f8d0);   // GMU_SPTPRAC_PWR_CLK_STATUS (A7XX)
 constexpr uint32_t kRbbmStatus = 0x0210 * 4, kGbifHalt = 0x3c45 * 4;
 extern "C" {
+uint32_t native_gpu_perf_vote[2];   // OPP and bandwidth index of the initial HFI vote
 uint32_t native_gpu_gx[8];   // vote status, fw error, oob ack polls, gx before, gx after, gx gdscr, RBBM_STATUS, GBIF_HALT
 }
 int hfiWait(void *) {IODelay(100); return 0;}
@@ -345,7 +352,24 @@ int ringBarrier(void *) {__asm__ volatile("dsb sy" ::: "memory"); return 0;}
 int ringPublish(void *, const volatile uint32_t *, size_t) {__asm__ volatile("dsb sy" ::: "memory"); return 0;}
 int ringAcquire(void *, volatile uint32_t *, size_t) {__asm__ volatile("dsb sy" ::: "memory"); return 0;}
 uint64_t ringNow(void *) {uint64_t us = 0; coldNow(nullptr, &us); return us;}
-int ringIdle(void *) {IODelay(20); return 0;}
+// The fence waits' pause. Once the GPU line is attached (irqAndTimer) a waiter that may block sleeps until the next GPU interrupt or
+// 100 us, whichever is first; before that, or where it may not block, it spins 20 us. int-143's waiters spun through every frame's
+// GPU time (35 ms a commit) on CPUs that were already the bottleneck.
+volatile bool gIrqAttached;
+volatile uint32_t gIrqCount;
+extern "C" {volatile uint64_t native_gpu_idle_sleeps, native_gpu_idle_spins;}
+extern "C" int get_preemption_level(void);
+int ringIdle(void *) {
+    if (gIrqAttached && ml_get_interrupts_enabled() && !ml_at_interrupt_context() && get_preemption_level() == 0) {
+        assert_wait_timeout(event_t(&gIrqCount), THREAD_UNINT, 100, NSEC_PER_USEC);
+        thread_block(THREAD_CONTINUE_NULL);
+        native_gpu_idle_sleeps = native_gpu_idle_sleeps + 1;
+    } else {
+        IODelay(20);
+        native_gpu_idle_spins = native_gpu_idle_spins + 1;
+    }
+    return 0;
+}
 OSSharedPtr<IOMemoryMap> gGpuMaps[5];
 volatile uint8_t *gGpuCpu[5];
 NativeAdrenoGpuBuffer gGpuBuffers[5];
@@ -384,15 +408,63 @@ void gpuSetActlr() {
     gActlrSet = base[(bank0 + 0x4) / 4];
 }
 // Reads one 64-bit word of physical memory through a fresh uncached mapping (page tables and buffer contents as DRAM holds them).
+// A throwaway uncached kernel mapping (io_map with VM_WIMG_IO). Not IOMemoryDescriptor::map: its kernel path (IOMapPages) sets the page's
+// own cache attribute to the requested mode, which changed every mapping of the page, a client's view of its BO included (int-098).
+extern "C" vm_offset_t ml_io_map_unmappable(vm_offset_t phys_addr, vm_size_t size, unsigned int flags);
+extern "C" void ml_io_unmap(vm_offset_t addr, vm_size_t size);
 bool physRead64(uint64_t pa, uint64_t *out) {
-    IODeviceMemory *m = IODeviceMemory::withRange(pa & ~uint64_t(0xfff), 0x1000);
-    if (!m) return false;
-    IOMemoryMap *map = m->map(kIOMapAnywhere | kIOMapInhibitCache);
-    m->release();
-    if (!map) return false;
-    *out = *reinterpret_cast<volatile uint64_t *>(map->getVirtualAddress() + (pa & 0xff8));
-    map->release();
+    const vm_offset_t va = ml_io_map_unmappable(vm_offset_t(pa & ~uint64_t(0xfff)), 0x1000, 0x7 /* VM_WIMG_IO */);
+    if (!va) return false;
+    *out = *reinterpret_cast<volatile uint64_t *>(va + (pa & 0xff8));
+    ml_io_unmap(va, 0x1000);
     return true;
+}
+// NativeAdrenoVm::sampleWord's cached reader: one aligned word through the kernel's cacheable physical aperture, so a line a client's
+// cacheable view left dirty is seen whatever the cache mode of the BO's own mappings.
+extern "C" vm_offset_t phystokv(uint64_t pa);
+extern "C" uint64_t gPhysBase, gPhysSize;
+int cachedRead32(uint64_t pa, uint32_t *value) {
+    if ((pa & 3) || pa < gPhysBase || pa - gPhysBase >= gPhysSize) return 1;
+    const vm_offset_t va = phystokv(pa);
+    if (!va) return 1;
+    *value = *reinterpret_cast<volatile uint32_t *>(va);
+    // Drop the line this read brought in: a stale clean copy would later differ from DRAM and look like a dirty one.
+    __asm__ volatile("dsb sy\n\tdc civac, %0\n\tdsb sy" :: "r"(va) : "memory");
+    return 0;
+}
+// NativeAdrenoVm::auditRange's line comparer (int-100): whole lines of one page as the cacheable aperture and DRAM (a fresh uncached
+// mapping) read them. A differing line is cleaned and invalidated, then DRAM is read again: holding the cached copy now, the line was
+// dirty; unchanged, it was a stale clean copy (now dropped). int-099's single-word check wrote its line back before reading DRAM.
+// The time spent and the attribute XNU keeps for the first page that held a dirty line go to the banner (GPUW).
+extern "C" unsigned int pmap_cache_attributes(unsigned int pn);
+extern "C" {volatile uint64_t native_adreno_audit_ticks; volatile uint32_t native_adreno_audit_attr;}
+int lineAudit(uint64_t pa, size_t bytes, uint32_t *dirty, uint32_t *stale) {
+    if (!bytes || ((pa | bytes) & 63) || (pa & 0xfff) + bytes > 0x1000 || pa < gPhysBase || pa - gPhysBase >= gPhysSize) return 1;
+    const uint64_t began = mach_absolute_time();
+    const vm_offset_t page = ml_io_map_unmappable(vm_offset_t(pa & ~uint64_t(0xfff)), 0x1000, 0x7 /* VM_WIMG_IO */);
+    const vm_offset_t cached = phystokv(pa);
+    if (!page || !cached) {if (page) ml_io_unmap(page, 0x1000); return 1;}
+    const vm_offset_t dram = page + vm_offset_t(pa & 0xfff);
+    for (size_t at = 0; at < bytes; at += 64) {
+        const volatile uint64_t *c = reinterpret_cast<const volatile uint64_t *>(cached + at);
+        const volatile uint64_t *d = reinterpret_cast<const volatile uint64_t *>(dram + at);
+        uint64_t copy[8];
+        bool differs = false;
+        for (unsigned i = 0; i < 8; ++i) {copy[i] = c[i]; if (copy[i] != d[i]) differs = true;}
+        if (!differs) continue;
+        __asm__ volatile("dsb sy\n\tdc civac, %0\n\tdsb sy" :: "r"(cached + at) : "memory");
+        bool written = true;
+        for (unsigned i = 0; i < 8; ++i) if (d[i] != copy[i]) written = false;
+        if (written) {
+            if (!*dirty && !native_adreno_audit_attr) native_adreno_audit_attr = 0x100 | (pmap_cache_attributes(unsigned(pa >> 12)) & 0xff);
+            ++*dirty;
+        } else {
+            ++*stale;
+        }
+    }
+    ml_io_unmap(page, 0x1000);
+    native_adreno_audit_ticks += mach_absolute_time() - began;
+    return 0;
 }
 // NativeAdrenoVm::sampleWord's DRAM reader (int-070): one aligned word through a fresh uncached mapping.
 int dramRead32(uint64_t pa, uint32_t *value) {
@@ -404,7 +476,7 @@ int dramRead32(uint64_t pa, uint32_t *value) {
 // Software walk of the GPU context's TTBR0 table (bank 0 TTBR0 +0x20, TCR +0x30: T0SZ bits 5:0, 4 KiB granule) for one GPU address.
 // The SMMU here has no address translation operations (IDR0.ATOSNS), so this shows what the table says, not what the TLB holds.
 // Returns the leaf descriptor (0 when absent) and the physical address it maps the address to.
-uint64_t gpuWalk(uint64_t va, uint64_t *pa) {
+[[maybe_unused]] uint64_t gpuWalk(uint64_t va, uint64_t *pa) {
     *pa = 0;
     const uint32_t id1 = native_gpu_context.id1;
     if (!gSmmuMap || !id1) return 0;
@@ -588,16 +660,19 @@ IOReturn armcpu_spi_attach(uint32_t intid, bool edge, void (*handler)(void *), v
                            uint64_t *router) __attribute__((weak));
 extern volatile uint64_t armcpu_spi_unhandled __attribute__((weak));
 }
-volatile uint32_t gIrqCount, gIrqLast, gIrqSeen;
+volatile uint32_t gIrqLast, gIrqSeen, gIrqEmpty;
 void gpuIrq(void *) {
     // a6xx_irq: read RBBM_INT_0_STATUS and clear it through RBBM_INT_CLEAR_CMD before anything else, so the level line drops
-    // before the EOI. A storm (no source cleared) masks the GPU interrupts instead of hanging the boot CPU.
+    // before the EOI. A storm (a line with no source to clear) masks the GPU interrupts instead of hanging the boot CPU; the
+    // fence interrupts of a running desktop are not one (the waiters then fall back to their 100 us timeout).
     const uint32_t status = gpuRd(A740_RBBM_INT_0_STATUS);
     if (status) gpuWr(A740_RBBM_INT_CLEAR_CMD, status);
     gIrqLast = status;
     gIrqSeen = gIrqSeen | status;
     gIrqCount = gIrqCount + 1;
-    if (gIrqCount > 100000) gpuWr(A740_RBBM_INT_0_MASK, 0);
+    gIrqEmpty = status ? 0 : gIrqEmpty + 1;
+    if (gIrqEmpty > 100000) gpuWr(A740_RBBM_INT_0_MASK, 0);
+    thread_wakeup(event_t(&gIrqCount));
 }
 bool cpFence(const uint32_t *words, size_t count) {
     uint32_t fence = 0, seen = 0;
@@ -633,6 +708,7 @@ void irqAndTimer() {
     uint32_t readback = 0;
     uint64_t router = ~0ull;
     q[0] = armcpu_spi_attach ? uint32_t(armcpu_spi_attach(332, false, gpuIrq, nullptr, &readback, &router)) : 0xdead;
+    gIrqAttached = q[0] == 0;
     q[1] = readback;
     IOSleep(20);
     q[2] = gIrqCount;
@@ -999,6 +1075,102 @@ int wrapperRound(IOService *svc, int &ok, int &n, IOReturn &err, int &errAt, uin
     uc->release();
     return matched;
 }
+// IO coherence (sheng-gpu-coherent, default 1), before any client: the A740 is ADRENO_QUIRK_HAS_CACHED_COHERENT behind the
+// dma-coherent GPU SMMU (a6xx_catalog.c, sm8550.dtsi), and Linux maps its cached BOs with IOMMU_CACHE (write-back, inner shareable).
+// A page of kernel memory is imported and mapped that way, and both directions are proved against DRAM:
+//   read:  the CPU stores new values over lines DRAM still holds old (counted dirty through an uncached mapping), the GPU copies the
+//          page, and the copy DRAM holds must be the new values, which only the CPU's caches had;
+//   write: the CPU keeps clean lines of a page it read, the GPU copies other values over it, and plain cached loads (no
+//          invalidate) must return the GPU's values.
+// Only both proofs turn native_adreno_io_coherent on; imported user memory is then mapped write-back inner-shareable and no longer
+// cleaned and invalidated around every submission (int-143: about 12 ms each, every imported IOSurface page every time).
+// Row: H d<dirty lines of 64> r<GPU read new>/<old> w<CPU saw GPU>/<DRAM> s<status> -> on/off/skip
+extern "C" volatile uint32_t native_adreno_io_coherent __attribute__((weak));
+extern "C" {char native_gpu_coherence_row[120]; uint32_t native_gpu_coherence[8];}
+bool dramPage(uint64_t pa, uint32_t *out) {
+    const vm_offset_t page = ml_io_map_unmappable(vm_offset_t(pa), 0x1000, 0x7 /* VM_WIMG_IO */);
+    if (!page) return false;
+    for (unsigned i = 0; i < 1024; ++i) out[i] = reinterpret_cast<const volatile uint32_t *>(page)[i];
+    ml_io_unmap(page, 0x1000);
+    return true;
+}
+bool gpuCopyPage(uint64_t src, uint64_t dst) {
+    uint32_t words[8] = {};
+    if (AdrenoPM4Type7(0x75, 5, &words[0]) != AdrenoPM4Success || AdrenoPM4Type7(0x12, 0, &words[6]) != AdrenoPM4Success) return false;
+    words[1] = 1024; words[2] = uint32_t(src); words[3] = uint32_t(src >> 32); words[4] = uint32_t(dst); words[5] = uint32_t(dst >> 32);
+    return cpFence(words, 7);
+}
+unsigned gCoherenceAttempts;
+void coherenceProbe(NativeAdrenoVm *vm) {
+    uint32_t *k = native_gpu_coherence;
+    unsigned wanted = 1;
+    PE_parse_boot_argn("sheng-gpu-coherent", &wanted, sizeof wanted);
+    if (!wanted || !vm || !&native_adreno_io_coherent) {
+        snprintf(native_gpu_coherence_row, sizeof native_gpu_coherence_row, "H skip (arg %u vm %d)", wanted, vm != nullptr);
+        return;
+    }
+    constexpr uint64_t kIova = 0x18000000;
+    constexpr size_t kBytes = 4 * 4096;
+    uint8_t *buf = static_cast<uint8_t *>(IOMallocAligned(kBytes, 4096));
+    NativeAdrenoMemory mem;
+    uint64_t handle = 0;
+    IOReturn st = buf ? mem.importTask(kernel_task, uint64_t(uintptr_t(buf)), kBytes, 40, kBytes) : kIOReturnNoMemory;
+    k[0] = 1;
+    if (!st) {k[0] = 2; st = vm->map(&mem, 0, kIova, 3, 1, 3, &handle);}
+    uint64_t phys[4] = {};
+    for (size_t j = 0; !st && j < mem.spanCount(); ++j)
+        for (size_t at = 0; at < mem.spans()[j].bytes; at += 4096) phys[(mem.spans()[j].offset + at) / 4096] = mem.spans()[j].physical + at;
+    static uint32_t words[1024];
+    bool pass = false;
+    if (!st && phys[0] && phys[1] && phys[2] && phys[3]) {
+        k[0] = 3;
+        volatile uint32_t *S = reinterpret_cast<volatile uint32_t *>(buf), *D = S + 1024, *R = S + 2048, *T = S + 3072;
+        // read direction. The proof needs S's new words still dirty in a CPU cache (DRAM still holding the old ones, k[1] >= 48 of 64
+        // lines) when the GPU copies S. int-150 found every line already written back once (d0/64) while both directions were right
+        // (r1024/0 w1024/1024): the precondition, not the snoop, had failed, and the whole boot ran with per-submission maintenance.
+        // So the setup repeats until the lines are seen dirty, up to eight times (attempts in the row), and only then does the GPU copy.
+        bool dirty = false;
+        for (unsigned attempt = 0; attempt < 8 && !st && !dirty; ++attempt) {
+            gCoherenceAttempts = attempt + 1;
+            for (unsigned i = 0; i < 1024; ++i) {S[i] = 0x11110000u | i; D[i] = 0; R[i] = 0x33330000u | i; T[i] = 0x44440000u | i;}
+            st = NativeAdrenoMaintainOwnedPages(buf, kBytes, NativeAdrenoCleanInvalidate);
+            for (unsigned i = 0; i < 1024; ++i) S[i] = 0x22220000u | i;
+            __asm__ volatile("dsb sy" ::: "memory");
+            k[1] = 0;
+            if (!st && dramPage(phys[0], words)) for (unsigned i = 0; i < 1024; i += 16) k[1] += words[i] == (0x11110000u | i);
+            dirty = k[1] >= 48;
+        }
+        if (!st && dirty) {
+            k[0] = 4;
+            if (gpuCopyPage(kIova, kIova + 4096) && dramPage(phys[1], words)) {
+                k[0] = 5;
+                for (unsigned i = 0; i < 1024; ++i) {k[2] += words[i] == (0x22220000u | i); k[3] += words[i] == (0x11110000u | i);}
+            }
+        }
+        // write direction: T written back and kept (clean, resident), then read so its lines are present when the GPU writes
+        if (!st && k[0] == 5) st = NativeAdrenoMaintainOwnedPages(const_cast<uint32_t *>(T), 4096, NativeAdrenoClean);
+        uint32_t touch = 0;
+        for (unsigned i = 0; i < 1024; ++i) touch += T[i];
+        __asm__ volatile("dsb sy" ::: "memory");
+        if (!st && k[0] == 5 && gpuCopyPage(kIova + 8192, kIova + 12288)) {
+            k[0] = 6;
+            for (unsigned i = 0; i < 1024; ++i) k[4] += T[i] == (0x33330000u | i);
+            if (dramPage(phys[3], words)) for (unsigned i = 0; i < 1024; ++i) k[5] += words[i] == (0x33330000u | i);
+        }
+        (void)touch;   /* the loads are volatile; the sum only keeps them one expression */
+        pass = k[0] == 6 && k[1] >= 48 && k[2] == 1024 && k[4] == 1024 && k[5] == 1024;
+    }
+    k[6] = uint32_t(st);
+    if (handle) (void)vm->unmap(handle);
+    // Whatever the result, no line of these pages stays in a CPU cache (a stale clean copy would outlive the free).
+    if (buf) (void)NativeAdrenoMaintainOwnedPages(buf, kBytes, NativeAdrenoCleanInvalidate);
+    (void)mem.release();
+    if (buf) IOFreeAligned(buf, kBytes);
+    k[7] = pass;
+    native_adreno_io_coherent = pass ? 1 : 0;
+    snprintf(native_gpu_coherence_row, sizeof native_gpu_coherence_row, "H d%u/64 a%u r%u/%u w%u/%u s%x k%u -> %s", k[1], gCoherenceAttempts,
+             k[2], k[3], k[4], k[5], k[6], k[0], pass ? "on" : "off");
+}
 void publishAndWrapperTest(bool rounds) {
     char row[64];
     if (!native_adreno_publish || !native_adreno_published_service || !native_adreno_publish_stats) {setRow(5, "P nolink"); return;}
@@ -1007,7 +1179,11 @@ void publishAndWrapperTest(bool rounds) {
     // userClientTest attaches the submit object; with the self-tests skipped it still has to be attached before a client opens.
     if (vm) gSubmit.attach(vm, &gRing);
     native_adreno_dram_read32 = dramRead32;
+    native_adreno_cached_read32 = cachedRead32;
+    native_adreno_line_audit = lineAudit;
+    coherenceProbe(vm);
     const IOReturn timer = gTimer.attach(&gTimerIo, NativeAdrenoTimeCp);
+    {unsigned wc = 1; PE_parse_boot_argn("sheng-gpu-wc", &wc, sizeof wc); native_adreno_wc_enabled = wc ? 1 : 0;}
     const IOReturn published = native_adreno_publish(vm, &gSubmit, &gRing, &clock, timer ? nullptr : &gTimer, &gDeviceInfo, 31, 40);
     IOService *svc = published ? nullptr : native_adreno_published_service();
     int ok = 0, n = 0, errAt = -1, v1 = -1, v2 = -1;
@@ -1061,6 +1237,9 @@ void publishMetal() {
     // The two keys the original _MTLRegisterDevices helper reads. The plugin name is ours: the bundle exists only through the
     // addon mount, and no Apple device identity (gpu,t8011 and the like) is claimed.
     accelerator->setProperty("MetalPluginName", "NativeAdrenoMetal");
+    // The one process (the render server) whose open of this accelerator and its client the kernel's open path grants in place of the sandbox verdict
+    // (patches/xnu/zzw-native-adreno-sandbox-grant.patch): the original profiles name no class of this driver.
+    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd");
     accelerator->setProperty("MetalPluginClassName", "NativeAdrenoMetalDevice");
     gMetalStage = 4;
     if (!accelerator->attach(IOService::getPlatform())) {accelerator->release(); gMetalStatus = kIOReturnNotAttached; return;}
@@ -1245,6 +1424,10 @@ void gpuStart() {
     if (!NativeAdrenoGpuContextBringup || !NativeAdrenoGpuContextBuffers || !gSmmuMap) {setRow(6, "Q nolink"); return;}
     // 1. The GPU's own context bank and buffers (arm-smmu-qcom: the GPU always gets bank 0; DT iommus SIDs 0 and 1).
     NativeAdrenoGmuContextReport &q = native_gpu_context;
+    // The BO pool (one contiguous block, sheng-gpu-pool MiB, default 1536) is taken inside the bring-up, before memory fragments. int-159:
+    // with 1536 MiB no BO fell back to scattered pages (peak 782 MiB in use); with 384 MiB (int-160) 18 did, 81933 single-page spans
+    // whose attribute XNU kept setting back (123847 pages write-combined again at submissions, 766 ms).
+    {unsigned pool = 1536; PE_parse_boot_argn("sheng-gpu-pool", &pool, sizeof pool); native_adreno_pool_mib = pool;}
     const IOReturn ctx = NativeAdrenoGpuContextBringup(reinterpret_cast<volatile uint8_t *>(gSmmuMap->getVirtualAddress()),
         kSmmuWindow, 0, 2, 0, 0, 1, 1, gpuCtxProgress, &q);
     // Q s<step> st<IOReturn> k<program>/<attach kit status> p<phase>e<enabled> r<route phase>v<verified> n<spans>
@@ -1329,6 +1512,7 @@ void gpuStart() {
     c[0] = 4;
     const NativeAdrenoRingIo rio{nullptr, ringWrite, ringRead, ringBarrier};
     const NativeAdrenoRingCache cache{nullptr, ringPublish, ringAcquire};
+    native_adreno_fence_phys = gGpuBuffers[2].physical;   // the page the CP writes its timestamps to, for the UFS log
     const IOReturn attached = gRing.attach(&rio, &cache, const_cast<uint8_t *>(gGpuCpu[1]), gGpuBuffers[1].bytes,
         gGpuBuffers[1].iova, const_cast<uint8_t *>(gGpuCpu[2]), gGpuBuffers[2].bytes, gGpuBuffers[2].iova);
     if (attached) {snprintf(row, sizeof row, "C4 ring attach %x", unsigned(attached)); setRow(7, row); return;}
@@ -1418,19 +1602,8 @@ void heartbeat() {
             gpuWr(0x0a87, 0); sqe[2] = gpuRd(0x0a88); sqe[3] = gpuRd(0x0a88);
             snprintf(stall, sizeof stall, "Q br %x %08x bv %x %08x", sqe[0], sqe[1], sqe[2], sqe[3]);
             setRow(2, stall);
-            // Once per hang, row 2 then shows instead the last submission's coherence sample (int-070), "C<submissions> c<first IB
-            // word, kernel cacheable alias> u<DRAM before the CPU cache maintenance> v<DRAM after it> d<DRAM now>". int-069 found the
-            // table entry right and DRAM holding the IB at hang time, yet the CP read a zero header: u=0 with c/v = 0x70970001 means
-            // the IB sat in a CPU cache line when the GPU fetched it; all four 0x70970001 point at the GPU side (translation or cache).
-            static char coherenceRow[64];
-            if (!coherenceRow[0]) {
-                const uint64_t ib = (uint64_t(gpuRd(0x0929)) << 32) | gpuRd(0x0928);
-                uint64_t pa = 0, w = 0;
-                if (gpuWalk(ib, &pa)) physRead64(pa, &w);
-                snprintf(coherenceRow, sizeof coherenceRow, "C%u c%x u%x v%x d%x", native_adreno_coherence[0],
-                         native_adreno_coherence[1], native_adreno_coherence[2], native_adreno_coherence[3], uint32_t(w));
-            }
-            setRow(2, coherenceRow);
+            // int-070..099 showed the last submission's coherence sample here once per hang; int-100: the banner's GPUC/GPUW rows carry the write-combine audit, so row 2 keeps the SQE row: PC 0x222/0x1c3 with a zero
+            // header is the stale-IB trap of int-065..069, anything else a wait inside the IB.
         } else if (gxOn()) {
             // Without a stall, row 2 shows the coherence samples, so a passing run still shows whether a CPU cache held an IB.
             if (native_adreno_coherence[0]) {
@@ -1472,8 +1645,15 @@ void gpuOn() {
     io.write32(io.cookie, ShengGmuCore, kG2hMask, ~(1u << 23));
     io.barrier(io.cookie);
     g[3] = rd(ShengGmuCore, kGxStatus);
-    // a6xx_gmu_set_initial_freq -> a6xx_hfi_set_freq: {ack_type 1 (blocking), freq index, bw index}.
-    const uint32_t vote[3] = {1, 1, 1};
+    // a6xx_gmu_set_initial_freq -> a6xx_hfi_set_freq: {ack_type 1 (blocking), freq index, bw index}. `sheng-gpu-perf=<n>` picks the
+    // GPU OPP (1 = 220 MHz ... 8 = 680 MHz, default 1) and the bandwidth level that OPP's opp-peak-kBps names; the bandwidth vote is
+    // also the DDR floor while the GPU is on (no GPU DCVS changes either afterwards).
+    unsigned perf = 1, bw = 1;
+    PE_parse_boot_argn("sheng-gpu-perf", &perf, sizeof(perf));
+    perf = ShengGmuPerfVote ? ShengGmuPerfVote(perf, &bw) : 1;
+    if (!ShengGmuPerfVote) bw = 1;
+    native_gpu_perf_vote[0] = perf; native_gpu_perf_vote[1] = bw;
+    const uint32_t vote[3] = {1, perf, bw};
     uint32_t out[16], error = 0;
     size_t count = 0;
     g[0] = AdrenoHfiExchange(&gColdDevice.hfi, 30, vote, 3, 1000, hfiWait, out, 16, &count, &error);
@@ -1502,8 +1682,10 @@ void gpuOn() {
         g[7] = rd(ShengGmuGpu, kGbifHalt);
     }
     // X v<vote status>/<fw error> o<ack polls, 101 = none> x<gx before>><after> c<GX GDSCR> R<RBBM_STATUS> H<GBIF_HALT>
-    if (gx) snprintf(row, sizeof row, "X v%u/%x o%u x%x>%x c%08x R%08x H%x", g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7]);
-    else snprintf(row, sizeof row, "X v%u/%x o%u x%x>%x c%08x gx-off", g[0], g[1], g[2], g[3], g[4], g[5]);
+    if (gx) snprintf(row, sizeof row, "X v%u/%x o%u x%x>%x c%08x R%08x H%x P%u/%u", g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7],
+                      native_gpu_perf_vote[0], native_gpu_perf_vote[1]);
+    else snprintf(row, sizeof row, "X v%u/%x o%u x%x>%x c%08x gx-off P%u/%u", g[0], g[1], g[2], g[3], g[4], g[5],
+                   native_gpu_perf_vote[0], native_gpu_perf_vote[1]);
     setRow(5, row);
     native_gpu_power_stage = gx ? 0x87 : 0x8f;
     if (gx && mode() >= 9) gpuStart();

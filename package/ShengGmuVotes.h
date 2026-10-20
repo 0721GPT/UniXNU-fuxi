@@ -24,6 +24,9 @@ typedef struct {
  * All input/aux/output storage is disjoint and immutable during the call.
  * Failure leaves output unchanged. Software fixtures are not board evidence. */
 AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *,AdrenoHfiStartupConfig *);
+/* The HFI GX_BW_PERF_VOTE indices for GPU OPP `perf` (1 = lowest real level, clamped to the table): the OPP index and the
+ * bandwidth-table index of that OPP's opp-peak-kBps, the pairing a6xx_gmu.c votes. Returns the OPP index used. */
+unsigned ShengGmuPerfVote(unsigned perf,unsigned *bandwidth);
 #ifdef __cplusplus
 }
 #endif

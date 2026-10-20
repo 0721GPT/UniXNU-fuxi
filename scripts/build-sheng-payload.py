@@ -62,7 +62,7 @@ for _arg in sys.argv[1:]:
         KERNEL_ARGS += ' ' + _value
 FAT_IMAGE = OUT / 'sheng-userdata-payload.img'   # what the user flashes
 TEST_DISK = OUT / 'sheng-payload-testdisk.img'   # GPT fidelity disk for QEMU
-FAT_SIZE = '192m'
+FAT_SIZE = '192m'   # int-151: ABL accepted a 257 MiB boot image but stayed in fastboot; 193 MiB images boot
 GPT_TEST_DISK_SIZE = 512 * 1024 * 1024           # sparse-friendly container
 
 

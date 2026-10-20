@@ -35,3 +35,12 @@ AdrenoHfiStartupStatus ShengGmuBuildStartup(const ShengGmuVoteInputs *in,AdrenoH
     if(AdrenoHfiStartupValidate(&c))return AdrenoHfiStartupInvalid;
     *out=c;return AdrenoHfiStartupSuccess;
 }
+unsigned ShengGmuPerfVote(unsigned perf,unsigned *bandwidth)
+{
+    if(perf<1)perf=1;
+    if(perf>=SHENG_GPU_OPPS)perf=SHENG_GPU_OPPS-1;
+    unsigned bw=1;
+    for(unsigned i=1;i<SHENG_GPU_BANDWIDTHS;++i)if(sheng_gpu_bandwidths[i]==sheng_gpu_opps[perf].kbps){bw=i;break;}
+    if(bandwidth)*bandwidth=bw;
+    return perf;
+}

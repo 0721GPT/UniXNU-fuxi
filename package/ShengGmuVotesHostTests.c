@@ -21,6 +21,9 @@ void test_sheng_votes(AdrenoHfiStartupConfig *full)
     for(unsigned present=0;present<2;++present)for(unsigned acd_enabled=0;acd_enabled<2;++acd_enabled)for(unsigned ifpc=0;ifpc<2;++ifpc) {
         in.gmxc_present=present;in.gmxc=present?(ShengGmuAux){gmxc,sizeof(gmxc)}:(ShengGmuAux){0};
         in.enable_acd=acd_enabled;in.enable_ifpc=ifpc;
+        {unsigned bw=99;CHECK(ShengGmuPerfVote(0,&bw)==1 && sheng_gpu_bandwidths[bw]==sheng_gpu_opps[1].kbps);
+         CHECK(ShengGmuPerfVote(99,&bw)==SHENG_GPU_OPPS-1 && sheng_gpu_bandwidths[bw]==sheng_gpu_opps[SHENG_GPU_OPPS-1].kbps);
+         for(unsigned p=1;p<SHENG_GPU_OPPS;++p){CHECK(ShengGmuPerfVote(p,&bw)==p && bw<SHENG_GPU_BANDWIDTHS && sheng_gpu_bandwidths[bw]==sheng_gpu_opps[p].kbps);}}
         CHECK(ShengGmuBuildStartup(&in,&c)==AdrenoHfiStartupSuccess);
         CHECK(c.gpu_count==SHENG_GPU_OPPS && c.gmu_count==SHENG_GMU_OPPS && c.bandwidth_count==SHENG_GPU_BANDWIDTHS && c.enable_ifpc==ifpc);
         unsigned packed=0,mask=0;

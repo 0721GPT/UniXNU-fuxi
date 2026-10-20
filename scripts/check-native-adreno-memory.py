@@ -67,6 +67,16 @@ if '34 native allocator/table-pool bindings and 4 capacity/scatter/publication/o
     raise SystemExit('Actual native memory to native SMMU binding coverage absent')
 (out / 'binding-host.log').write_text(binding_host.stdout)
 
+# Independent interval-oracle controls, including nesting and filtered indices.
+alias_test = out / 'test-vm-alias'
+subprocess.run(['xcrun', 'clang++', '-std=c++17', *host_flags, '-I', kit,
+                kit / 'tests/test_vm_alias.cpp', '-o', alias_test], check=True, timeout=60)
+alias_host = subprocess.run([alias_test], check=True, capture_output=True, text=True, timeout=30)
+print(alias_host.stdout, end='')
+if '2048 oracle profiles / 524288 queries; 65536 reversed spans' not in alias_host.stdout:
+    raise SystemExit('Physical alias interval coverage absent')
+(out / 'vm-alias-host.log').write_text(alias_host.stdout)
+
 # Real VM transaction code over the same software SMMU register peer.
 vm_test = out / 'test-vm'
 subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
@@ -76,8 +86,10 @@ subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
                 *host_smmu_objects, '-o', vm_test], check=True, timeout=90)
 vm_host = subprocess.run([vm_test], check=True, capture_output=True, text=True, timeout=60)
 print(vm_host.stdout, end='')
-if '1 native map/hold/unmap transaction, 13 pre-ownership refusals and 1 post-hold poison/retention case' not in vm_host.stdout:
+if '1 native map/hold/unmap transaction, 13 pre-ownership refusals, 1 scattered-span ordering and capacity case and 1 post-hold poison/retention case' not in vm_host.stdout:
     raise SystemExit('Actual native VM transaction coverage absent')
+if 'VM alias index/fallback preserve attribute-class refusals before MMIO/ownership; 8192-span different-class map/unmap' not in vm_host.stdout:
+    raise SystemExit('Native VM attribute-class alias controls absent')
 (out / 'vm-host.log').write_text(vm_host.stdout)
 
 # Real ring/fence code over the same software CP register peer.
@@ -120,7 +132,7 @@ subprocess.run(['xcrun', 'clang++', '-std=c++23', *host_flags, '-I', includes,
                 *host_smmu_objects, ring_kind, '-o', client_test], check=True, timeout=120)
 client_host = subprocess.run([client_test], check=True, capture_output=True, text=True, timeout=60)
 print(client_host.stdout, end='')
-if '1 complete user-client transaction with pre-submit wait, 1 CPU mapping lease block, 1 queue lifecycle block, 3 metadata refusals, 1 dispatched transaction, 6 dispatch size/argument refusals, 6 allocation refusals, 7 map refusals and 1 poisoned-commit retention case' not in client_host.stdout:
+if '1 complete user-client transaction with pre-submit wait, 1 CPU mapping lease block, 1 queue lifecycle block, 3 metadata refusals, 1 dispatched transaction, 6 dispatch size/argument refusals, 6 allocation refusals, 7 map refusals and 1 poisoned-commit retention case, 1 two-client shared-ring block with 8 scope/window refusals' not in client_host.stdout:
     raise SystemExit('Actual native user-client coverage absent')
 (out / 'userclient-host.log').write_text(client_host.stdout)
 
