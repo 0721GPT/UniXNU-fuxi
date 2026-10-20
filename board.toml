@@ -185,6 +185,7 @@ kernel_args = [
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
   "sheng-touch-hid=1",
+  "sheng-data-persist=2",
 ]
 
 [payload.adt]
