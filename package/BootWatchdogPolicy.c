@@ -21,6 +21,23 @@ static const char policy_tail[]="</dict></plist>\n";
 static char policy[768],jobs[200];
 volatile int sheng_watchdog_policy_status=-1;
 
+// sheng-setup=1 or sheng-data-reset=2 (the install entry's "show Hello" choice): remove Setup's completion flags once, so this boot shows the Hello page.
+// iPadOS writes them again when Setup finishes, so later boots do not show it. Absent files are fine.
+static int sheng_boot_setup_reset(proc_t p,uint64_t scratch) {
+ static const char *const files[]={
+  "/private/var/mobile/Library/Preferences/com.apple.purplebuddy.plist",
+  "/private/var/mobile/Library/Preferences/com.apple.purplebuddy.notbackedup.plist"};
+ for(unsigned i=0;i<sizeof(files)/sizeof(files[0]);++i) {
+  int32_t result=0;
+  int error=copyout(files[i],scratch,strlen(files[i])+1);
+  if(error)return error;
+  struct unlink_args rm={.path=scratch};
+  error=unlink(p,&rm,&result);
+  if(error && error!=ENOENT)return error;
+ }
+ return 0;
+}
+
 int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  proc_t p=process;
  int enabled=0,error=0,fd=-1;int32_t result=0;
@@ -28,6 +45,16 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  if(!PE_parse_boot_argn("sheng-disable-jobs",jobs,sizeof(jobs)))jobs[0]=0;jobs[sizeof(jobs)-1]=0;
  if(enabled!=1)enabled=0;
  for(const char *c=jobs;*c;++c)if(!((*c>='a'&&*c<='z')||(*c>='A'&&*c<='Z')||(*c>='0'&&*c<='9')||*c=='.'||*c=='-'||*c==','))return EINVAL;
+ int setup=0,reset=0;
+ PE_parse_boot_argn("sheng-setup",&setup,sizeof(setup));
+ PE_parse_boot_argn("sheng-data-reset",&reset,sizeof(reset));   // 2 = erase Data and show the Hello page; 1 = erase Data, Setup stays skipped
+ if(reset==2)setup=1;
+ if(setup==1 && (error=sheng_boot_setup_reset(p,scratch))) {
+  sheng_watchdog_policy_status=error;
+  printf("sheng setup flags reset failed: %d\n",error);
+  return error;
+ }
+ if(setup==1)printf("sheng setup flags reset: Hello page on this boot\n");
  if(!enabled && !jobs[0])return 0;
  policy[0]=0;strlcat(policy,policy_head,sizeof(policy));
  if(enabled)strlcat(policy,policy_watchdogd,sizeof(policy));
@@ -49,8 +76,9 @@ int sheng_boot_watchdog_policy(void *process, uint64_t scratch) {
  error=mkdir(p,&md,&result);
  if(error && error!=EEXIST)goto done;
  if((error=copyout(path,scratch,strlen(path)+1)))goto done;
- // Refuse existing settings and symlinks instead of replacing their contents.
- struct open_args op={.path=scratch,.flags=O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,.mode=0644};
+ // With persistent Data the previous boot's file is there: this policy is rewritten in place on every boot (it must follow the
+ // boot arguments). Symlinks are still refused (O_NOFOLLOW) and the fstat check below insists on a root-owned regular file.
+ struct open_args op={.path=scratch,.flags=O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,.mode=0644};
  if((error=open(p,&op,&result)))goto done;
  fd=result;
  if((error=copyout(policy,scratch+0x200,strlen(policy))))goto done;
