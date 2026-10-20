@@ -23,7 +23,7 @@ Device repository for the Xiaomi Pad 6S Pro (sheng, SM8550). It holds the board 
 
 Firmware: [uefi-sheng](https://github.com/UniXNU/uefi-sheng).
 
-Build with the `unixnu` driver of [UniXNU](https://github.com/UniXNU/UniXNU).
+Build with the `unixnu` driver of [UniXNU](https://github.com/UniXNU/UniXNU). Clone both repositories with `--recurse-submodules`; `unixnu fetch` also updates the module submodules.
 
 ## Device support
 
@@ -33,6 +33,7 @@ The boot chain reaches XNU. This table records user-facing device support from t
 | --- | --- | --- |
 | Touch | ✅ | Novatek NT36532E |
 | Display | ✅ | |
+| UFS | ✅ | Native UFS root |
 | Wi-Fi | ❌ | |
 | Bluetooth | ❌ | |
 | Camera | ❌ | |
