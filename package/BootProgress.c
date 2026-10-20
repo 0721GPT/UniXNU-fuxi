@@ -18,6 +18,8 @@ extern int proc_selfpid(void);
 #include <machine/machine_routines.h>
 #include <kern/misc_protos.h>
 #include <kern/boot_progress.h>
+#include <arm/cpu_data_internal.h>
+#include <arm/thread.h>
 #include <console/video_console.h>
 #include "BootProgressCore.h"
 #include "BootProgressDisplay.h"
@@ -33,6 +35,7 @@ static unsigned render_busy;
 // the diagnostic page. Any new validated scanout yields it again through boot_progress_prepare_scanout.
 static unsigned resume_after,last_scanout_at;
 static char build_tag[32];
+const char *boot_progress_tag(void) { return build_tag; }
 static struct bp_pulse pulse;
 struct bp_panic_info boot_progress_panic_vinfo;
 // The panic screen (scripts/xnu-panic-screen.c) also copies the formatted panic message here (first panic only, NUL-terminated):
@@ -85,7 +88,10 @@ extern volatile unsigned boot_ui_trace_phase __attribute__((weak_import));
 extern volatile unsigned boot_ui_trace_index __attribute__((weak_import));
 extern void boot_process_capture(void) __attribute__((weak_import));
 extern void boot_process_snapshot(void) __attribute__((weak_import));
+extern void boot_log_tick(unsigned) __attribute__((weak_import));
+extern void sheng_cpufreq_poll(void) __attribute__((weak_import));
 extern char boot_process_rows[10][120] __attribute__((weak_import));
+extern unsigned boot_ui_trace_role_rows(unsigned,char [][120],unsigned,unsigned) __attribute__((weak_import));
 extern char native_touch_rows[4][120] __attribute__((weak_import));
 extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern volatile uint32_t native_hid_input_events[8] __attribute__((weak_import));
@@ -117,6 +123,7 @@ extern volatile uint32_t native_legacy_swap_validation_result __attribute__((wea
 extern volatile uint32_t native_legacy_swap_validation_reason __attribute__((weak_import));
 extern volatile uint32_t native_legacy_swap_accepted_count __attribute__((weak_import));
 extern volatile uint32_t native_legacy_swap_rejected_count __attribute__((weak_import));
+extern volatile uint64_t native_legacy_rej_surface[7] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_rej_reason __attribute__((weak_import));
 extern volatile uint64_t native_legacy_rej_surfaces[4] __attribute__((weak_import));
 extern volatile uint32_t native_legacy_rej_state[3] __attribute__((weak_import));
@@ -161,7 +168,15 @@ static int take(void) {
   return 1;
 }
 static void release(void) { __atomic_store_n(&busy, 0, __ATOMIC_RELEASE); }
+// The text of every page row and of the last banner paint, for the UFS log (BootLog.c).
+char boot_progress_page_text[48][BP_COLS];
+char boot_progress_banner_text[49][120];
+volatile unsigned boot_progress_banner_rows;
+static void capture(unsigned row, const char *text) {
+  if(row<48){strncpy(boot_progress_page_text[row],text,BP_COLS-1);boot_progress_page_text[row][BP_COLS-1]=0;}
+}
 static void line(unsigned row, const char *text, uint32_t color) {
+  capture(row,text);
   // Reserve the last diagnostic row for a readable independent pulse.
   if(row==47 && __atomic_load_n(&pulse.ready,__ATOMIC_ACQUIRE))return;
   bp_line(&display,row,text,color);
@@ -171,6 +186,7 @@ static void line(unsigned row, const char *text, uint32_t color) {
 #define BP_BAR_STOP 0xff7a1f1f
 #define BP_BAR_SECTION 0xff1a2029
 static void bar(unsigned row, const char *text, uint32_t color, uint32_t background) {
+  capture(row,text);
   if(row==47 && __atomic_load_n(&pulse.ready,__ATOMIC_ACQUIRE))return;
   bp_line_bg(&display,row,text,color,background);
 }
@@ -349,12 +365,13 @@ static void draw(unsigned now) {
       snprintf(b,sizeof(b),"REJ acc=%u rej=%u r=%u s0=%llx cls=%.24s s1=%llx s2=%llx s3=%llx",
         native_legacy_swap_accepted_count,native_legacy_swap_rejected_count,native_legacy_rej_reason,
         native_legacy_rej_surfaces[0],native_legacy_rej_class,native_legacy_rej_surfaces[1],native_legacy_rej_surfaces[2],native_legacy_rej_surfaces[3]);line(33,b,0xffff6600);
-      snprintf(b,sizeof(b),"REJ st=%x/%x/%x opt=%x/%x/%x wh=%ux%u r0=%u,%u,%u,%u r1=%u,%u,%u,%u",
+      // The request's two rectangles were the whole display when the surface was judged (reason 4); what matters then is the surface itself.
+      snprintf(b,sizeof(b),"REJ st=%x/%x/%x wh=%ux%u SURF %llux%llu fmt=%08llx pl=%llu st=%llu al=%llu ml=%llu",
         native_legacy_rej_state[0],native_legacy_rej_state[1],native_legacy_rej_state[2],
-        native_legacy_rej_options[0],native_legacy_rej_options[1],native_legacy_rej_options[2],
         native_legacy_rej_size[0],native_legacy_rej_size[1],
-        native_legacy_rej_rects[0][0],native_legacy_rej_rects[0][1],native_legacy_rej_rects[0][2],native_legacy_rej_rects[0][3],
-        native_legacy_rej_rects[1][0],native_legacy_rej_rects[1][1],native_legacy_rej_rects[1][2],native_legacy_rej_rects[1][3]);line(34,b,0xffff6600);
+        (unsigned long long)native_legacy_rej_surface[0],(unsigned long long)native_legacy_rej_surface[1],(unsigned long long)native_legacy_rej_surface[2],
+        (unsigned long long)native_legacy_rej_surface[3],(unsigned long long)native_legacy_rej_surface[4],(unsigned long long)native_legacy_rej_surface[5],
+        (unsigned long long)native_legacy_rej_surface[6]);line(34,b,0xffff6600);
     } else if(&native_legacy_frame_count && native_legacy_frame_count) {
       // FRAME rows: the last six presented frames (of the first 32 kept): c = copied OS surface, B = blank fill,
       // t = seconds since the first frame, n = nonblack pixels, y = last nonblack row. Total count is in the SWAP row.
@@ -572,11 +589,45 @@ void boot_progress_exit(int pid,const char *name,int status,unsigned ns,uint64_t
   if(signal==6 && boot_progress_exit_reason)boot_progress_exit_reason(pid,signal,exit_records.reason,sizeof(exit_records.reason));
   __atomic_store_n(&exit_lock,0,__ATOMIC_RELEASE);
 }
+// Sampling profile (int-146): every interrupt that lands in a process records that process's interrupted PC, user (EL0) or kernel, in a
+// ring of the last 64K samples; boot_progress_profile_rows ranks them per process for the UFS log. One packed word per sample:
+// pid << 48 | kernel << 47 | pc & (2^47 - 1) (a kernel PC is rebuilt by setting the top 17 bits).
+enum {BpProfSamples = 65536};
+static uint64_t bp_prof[BpProfSamples];
+static uint32_t bp_prof_head;
+// Kernel samples also keep the interrupted frame chain (int-147): int-146's hottest kernel PC was the instruction after DAIFClr in
+// ml_set_interrupts_enabled, i.e. timer interrupts held pending by an interrupts-masked section, which only its callers can name.
+// Per sample: pc and three return addresses, each as its low 32 bits (kernel text lies in one 4 GiB window); 0 = frame not inside the
+// interrupted thread's kernel stack.
+enum {BpKernSamples = 32768};
+static uint32_t bp_kern[BpKernSamples][4];
+static uint32_t bp_kern_head;
+static void bp_kernel_chain(uint64_t pc) {
+  uint32_t *e=bp_kern[__atomic_fetch_add(&bp_kern_head,1,__ATOMIC_RELAXED)%BpKernSamples];
+  e[0]=(uint32_t)pc;e[1]=e[2]=e[3]=0;
+  const arm_saved_state_t *s=getCpuDatap()->cpu_int_state;thread_t thread=current_thread();
+  if(!s || !thread || !thread->kernel_stack)return;
+  const uint64_t low=(uint64_t)thread->kernel_stack,high=low+(uint64_t)kernel_stack_size;
+  uint64_t fp=(uint64_t)get_saved_state_fp(s);
+  for(unsigned i=1;i<4 && fp>=low && fp+16<=high && !(fp&15);++i) {
+    const uint64_t *frame=(const uint64_t *)fp;e[i]=(uint32_t)frame[1];
+    const uint64_t next=frame[0];if(next<=fp)break;fp=next;
+  }
+}
 void boot_progress_irq(uint64_t pc,uint64_t psr,uint64_t sp) {
   // Independent of the recorder lock. IRQ still performs no pixel stores.
   if(enabled) {
     __atomic_fetch_add(&irq_entries,1,__ATOMIC_RELAXED);
     __atomic_store_n(&irq_entry_pc,pc,__ATOMIC_RELAXED);
+    if(started && nprocs>0) {
+      const int pid=proc_selfpid();
+      if(pid>0) {
+        const uint64_t kernel=(psr&0x1f)!=0;
+        const uint32_t at=__atomic_fetch_add(&bp_prof_head,1,__ATOMIC_RELAXED);
+        bp_prof[at%BpProfSamples]=((uint64_t)(pid&0xffff)<<48)|(kernel<<47)|(pc&((1ull<<47)-1));
+        if(kernel)bp_kernel_chain(pc);
+      }
+    }
   }
   if (!enabled || state.frozen || !take()) return;
   ++irq_count;last_pc=pc;last_psr=psr;last_sp=sp;boot_progress_last_pc=pc;
@@ -754,6 +805,9 @@ static void px_text(unsigned x0,unsigned top,const char *text,unsigned cols,uint
   }
 }
 extern volatile uint64_t native_legacy_copy_n __attribute__((weak_import));
+extern volatile uint64_t native_gop_gpu_offers __attribute__((weak_import)),native_gop_gpu_completions __attribute__((weak_import)),
+  native_gop_gpu_failures __attribute__((weak_import)),native_gop_gpu_abandoned __attribute__((weak_import));
+extern volatile uint32_t native_legacy_gpu_fallbacks __attribute__((weak_import)),native_legacy_gpu_last_status __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_last __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_max __attribute__((weak_import));
 extern volatile uint64_t native_legacy_copy_sum __attribute__((weak_import));
@@ -763,6 +817,14 @@ extern char native_cpufreq_row[120] __attribute__((weak_import));
 extern char native_wi_log[4][100] __attribute__((weak_import));
 extern volatile unsigned native_wi_count __attribute__((weak_import));
 extern volatile uint64_t armcpu_timer_interrupts __attribute__((weak_import));
+extern volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_coherence[8] __attribute__((weak_import));
+extern volatile uint32_t native_adreno_wc_distrusted __attribute__((weak_import));
+extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
+extern volatile uint64_t native_adreno_reassert_ticks __attribute__((weak_import));
+extern volatile uint64_t native_adreno_audit_ticks __attribute__((weak_import));
+extern volatile uint32_t native_adreno_audit_attr __attribute__((weak_import));
+static uint64_t banner_cache_ticks,banner_cache_bytes,banner_submits;
 extern volatile uint64_t armcpu_ipi_interrupts __attribute__((weak_import));
 static volatile uint64_t sleep_n,sleep_over_sum,sleep_over_max,sleep_late50;
 static uint64_t banner_sleep_n,banner_sleep_sum,banner_sleep_late,banner_tint,banner_ipi;
@@ -777,10 +839,11 @@ static void crash_banner(unsigned now) {
   for(unsigned i=4;i<8;++i)for(unsigned k=0;k<47;++k)gpu_sig=gpu_sig*131ULL+(unsigned char)boot_progress_ext[i][k];
   for(unsigned i=0;i<2;++i)for(unsigned k=0;k<111;++k)gpu_sig=gpu_sig*131ULL+(unsigned char)boot_progress_ext_wide[i][k];
   for(unsigned k=0;k<255;++k)gpu_sig=gpu_sig*131ULL+(unsigned char)boot_progress_panic_text[k];
-  uint64_t signature=(&native_legacy_copy_n?native_legacy_copy_n:0)*1000003ULL+(now/10)*977ULL+(&native_wi_count?native_wi_count:0)*7919ULL+exit_records.crashes*131ULL+exit_records.failed+gpu_sig*17ULL;
+  uint64_t swaps=(&native_legacy_swap_validation_calls?native_legacy_swap_validation_calls:0)*31ULL+(&native_gop_gpu_offers?native_gop_gpu_offers+native_gop_gpu_completions*3:0);
+  uint64_t signature=(&native_legacy_copy_n?native_legacy_copy_n:0)*1000003ULL+swaps*1009ULL+(now/10)*977ULL+(&native_wi_count?native_wi_count:0)*7919ULL+exit_records.crashes*131ULL+exit_records.failed+gpu_sig*17ULL;
   if(signature==banner_signature)return;
   banner_signature=signature;banner_second=now;
-  char rows[26][120];unsigned n=0;
+  char rows[48][120];unsigned n=0;
   if(__atomic_exchange_n(&exit_lock,1,__ATOMIC_ACQUIRE))return;
   unsigned crashes=exit_records.crashes,failed=exit_records.failed;
   // The two latest crash records, each wrapped over up to four rows (header, then the frame-pointer backtrace); then the last exits.
@@ -801,6 +864,51 @@ static void crash_banner(unsigned now) {
       (unsigned long long)(native_legacy_copy_sum/c*1000000/f),(unsigned long long)(native_legacy_copy_max*1000000/f),
       (unsigned long long)(native_legacy_copy_bytes_last>>10),(unsigned long long)((native_legacy_copy_bytes_sum/c)>>10));
     banner_copy_n=c;
+  }
+  // The display path's counters (the GPU hand-off hides the CPU copy row): swaps the driver validated and how many it took, and the GPU
+  // client's offers, completions, failures, abandoned frames, CPU fallbacks and the last fallback status.
+  if(&native_legacy_swap_validation_calls && native_legacy_swap_validation_calls) {
+    snprintf(rows[n++],120,"SWAP  calls=%u accepted=%u rejected=%u | gpu offers=%llu done=%llu failed=%llu abandoned=%llu fallback=%u last=%x",
+      native_legacy_swap_validation_calls,&native_legacy_swap_accepted_count?native_legacy_swap_accepted_count:0,
+      &native_legacy_swap_rejected_count?native_legacy_swap_rejected_count:0,
+      (unsigned long long)(&native_gop_gpu_offers?native_gop_gpu_offers:0),(unsigned long long)(&native_gop_gpu_completions?native_gop_gpu_completions:0),
+      (unsigned long long)(&native_gop_gpu_failures?native_gop_gpu_failures:0),(unsigned long long)(&native_gop_gpu_abandoned?native_gop_gpu_abandoned:0),
+      &native_legacy_gpu_fallbacks?native_legacy_gpu_fallbacks:0,&native_legacy_gpu_last_status?native_legacy_gpu_last_status:0);
+  }
+  // GPU CPU-cache maintenance (all passes: submissions, completions, allocations) since the last paint and in total, per submission,
+  // the longest single pass and how much memory user BOs hold write-combined.
+  if(&native_adreno_cache_stats && &native_adreno_coherence && native_adreno_coherence[0]) {
+    uint64_t f=0;__asm__ volatile("mrs %0, cntfrq_el0":"=r"(f));if(!f)f=19200000;
+    uint64_t t=native_adreno_cache_stats[0],b=native_adreno_cache_stats[1],sub=native_adreno_coherence[0];
+    uint64_t dt=t-banner_cache_ticks,db=b-banner_cache_bytes,ds=sub-banner_submits;
+    snprintf(rows[n++],120,"GPUC  last: subs=%llu cache_ms=%llu MB=%llu per_sub_us=%llu | all: subs=%llu ms=%llu max_us=%llu wc_MB=%llu off@%u",
+      (unsigned long long)ds,(unsigned long long)(dt*1000/f),(unsigned long long)(db>>20),(unsigned long long)(ds?dt*1000000/f/ds:0),
+      (unsigned long long)sub,(unsigned long long)(t*1000/f),(unsigned long long)(native_adreno_cache_stats[2]*1000000/f),
+      (unsigned long long)(native_adreno_cache_stats[4]>>8),&native_adreno_wc_distrusted?native_adreno_wc_distrusted:0);
+    banner_cache_ticks=t;banner_cache_bytes=b;banner_submits=sub;
+    // The write-combine audit (int-100): submissions and IB lines compared, lines a CPU cache held dirty or stale, the first dirty page's
+    // XNU attribute (1xx; 106 = write-combined, 102 = cacheable) and the last failure; int-101: pages XNU had set back to cacheable and
+    // that were write-combined again, and the cost of audit and re-assertion. off@ above ends the trust.
+    if(&native_adreno_wc_audit && native_adreno_wc_audit[0])
+      snprintf(rows[n++],120,"GPUW  audited=%u lines=%u dirty=%u stale=%u attr=%x fail=%x reset=%u audit_us=%llu reassert_us=%llu",
+        native_adreno_wc_audit[0],native_adreno_wc_audit[1],native_adreno_wc_audit[2],native_adreno_wc_audit[3],
+        &native_adreno_audit_attr?native_adreno_audit_attr:0,native_adreno_wc_audit[4],native_adreno_wc_audit[5],
+        (unsigned long long)(&native_adreno_audit_ticks?native_adreno_audit_ticks*1000000/f:0),
+        (unsigned long long)(&native_adreno_reassert_ticks?native_adreno_reassert_ticks*1000000/f:0));
+  }
+  // SpringBoard and backboardd as the process probe last saw them (threads, run state, wired/user counters), when they exist.
+  if(&boot_process_rows)
+    for(unsigned i=0;i<10 && n<22;++i)
+      if((!strncmp(boot_process_rows[i],"SpringBoard p",13) || !strncmp(boot_process_rows[i],"backboardd p",12)))
+        snprintf(rows[n++],120,"PROC  %.100s",boot_process_rows[i]);
+  // SpringBoard's threads as the stack tracer last saw them (main thread registers and 24 return addresses, then the other threads), then
+  // the wait chain boot-ui-follow traces: the process SpringBoard sends to (role U) and the one that process sends to (role B).
+  // They take only what the panel's height leaves after the rows below (load, UFS, scheduler, CPU, eight GPU rows, three panic rows).
+  unsigned stack_rows=0;
+  if(&boot_ui_trace_role_rows) {
+    unsigned fit=(display.height-8)/(14*display.scale),cap=fit>2?fit-2:0;if(cap>48)cap=48;
+    static const unsigned roles[3]={1,3,0},limit[3]={8,7,6};
+    for(unsigned k=0;k<3 && n+15+6<=cap;++k){unsigned room=cap-15-n;unsigned got=boot_ui_trace_role_rows(roles[k],rows+n,room<limit[k]?room:limit[k],k==0);n+=got;stack_rows+=got;}
   }
   // Where the time goes: scheduler ticks since the last paint (user/system/idle percent over all cores) and UFS work since then
   // (hashing/verification ms, transport read ms, 4 KiB blocks verified, read requests).
@@ -832,7 +940,8 @@ static void crash_banner(unsigned now) {
       (unsigned long long)(sl-banner_sleep_late),(unsigned long long)(ti-banner_tint),(unsigned long long)(ip-banner_ipi));
     banner_sleep_n=sn;banner_sleep_sum=ss;banner_sleep_late=sl;banner_tint=ti;banner_ipi=ip;
   }
-  if(&native_wi_count && native_wi_count) {
+  // The work-interval log gives its rows to the stack rows (the banner must fit the panel's height).
+  if(!stack_rows && &native_wi_count && native_wi_count) {
     unsigned c=native_wi_count;
     for(unsigned i=0;i<3 && i<c;++i)snprintf(rows[n++],120,"%s",native_wi_log[(c-1-i)%4]);
   }
@@ -840,10 +949,10 @@ static void crash_banner(unsigned now) {
   // The extension slots are drawn only on the boot page (display bound); the GPU slots 2-7 also go to the live banner.
   // Slots 2 and 3 carry the IPI self-test and the exec observer from the GPU probe once it has run (before that they hold the early
   // zap/interrupt lines, which are worth seeing too), so the banner shows slots 2-7 as GPU1-GPU6.
-  for(unsigned i=2;i<8 && n<26;++i)if(boot_progress_ext[i][0] && boot_progress_ext[i][0]!=' ')snprintf(rows[n++],120,"GPU%u  %.47s",i-1,boot_progress_ext[i]);
-  for(unsigned i=0;i<2 && n<26;++i)if(boot_progress_ext_wide[i][0])snprintf(rows[n++],120,"GPU%u  %.111s",i+7,boot_progress_ext_wide[i]);
+  for(unsigned i=2;i<8 && n<48;++i)if(boot_progress_ext[i][0] && boot_progress_ext[i][0]!=' ')snprintf(rows[n++],120,"GPU%u  %.47s",i-1,boot_progress_ext[i]);
+  for(unsigned i=0;i<2 && n<48;++i)if(boot_progress_ext_wide[i][0])snprintf(rows[n++],120,"GPU%u  %.111s",i+7,boot_progress_ext_wide[i]);
   // A panic that drew the panic screen and was then painted over: its message, wrapped over up to three rows.
-  for(unsigned part=0;part<3 && boot_progress_panic_text[part*108] && n<26;++part) {
+  for(unsigned part=0;part<3 && boot_progress_panic_text[part*108] && n<48;++part) {
     char piece[109];unsigned k=0;
     for(;k<108 && part*108+k<255 && boot_progress_panic_text[part*108+k];++k){char ch=boot_progress_panic_text[part*108+k];piece[k]=(ch>=32&&ch<127)?ch:' ';}
     piece[k]=0;
@@ -865,6 +974,9 @@ static void crash_banner(unsigned now) {
   snprintf(head,sizeof head," UniXNU live diagnostics%s%s%s  t=%us  crashes=%u exits=%u",build_tag[0]?"  [":"",build_tag,
     build_tag[0]?"]":"",now,crashes,failed);
   px_text(0,title,head,cols,0xffffffff,BP_BAR_LIVE);
+  memcpy(boot_progress_banner_text[0],head,120);
+  for(unsigned i=0;i<n;++i)memcpy(boot_progress_banner_text[i+1],rows[i],120);
+  boot_progress_banner_rows=n+1;
   for(unsigned i=0;i<n;++i) {
     if(__atomic_load_n(&display.yield_requested,__ATOMIC_ACQUIRE))return;
     const char *r=rows[i];
@@ -876,6 +988,11 @@ static void crash_banner(unsigned now) {
 }
 static void touch_overlay_locked(void);
 static void touch_overlay(void) {
+  // sheng-banner=0 switches every on-screen diagnostic painting off once the system owns the display (the UFS log carries the same rows):
+  // the painters hold render_busy for about a million uncached stores, which a swap's scanout hand-off has to wait for.
+  static int banner_off=-1;
+  if(banner_off<0){unsigned v=1;PE_parse_boot_argn("sheng-banner",&v,sizeof(v));banner_off=v==0;}
+  if(banner_off)return;
   __atomic_fetch_add(&touch_passes,1,__ATOMIC_RELAXED);
   // Same rule as the text renderer: draw only while holding render_busy, so a display handoff (which takes it before
   // retiring the mapping) can never overlap these stores. A pass that finds it taken is simply skipped.
@@ -950,6 +1067,8 @@ static void monitor(void *arg, wait_result_t result) {
     unsigned now=seconds();
     if(nprocs>0 && !named){thread_set_thread_name(current_thread(),"boot_progress");named=1;}
     if(boot_process_snapshot)boot_process_snapshot();
+    if(boot_log_tick)boot_log_tick(now);
+    if(sheng_cpufreq_poll)sheng_cpufreq_poll();
     if(boot_ui_trace_snapshot)boot_ui_trace_snapshot(now);
     if(&boot_process_attempts && &boot_process_busy) {
       unsigned attempt=__atomic_load_n(&boot_process_attempts,__ATOMIC_RELAXED);
@@ -981,4 +1100,86 @@ void boot_progress_start(void) {
   boot_progress_stage(state.continuous ?
     "monitor continuous: deadlines warn only; OS remains running" :
     "monitor armed: idle 30s / total 120s; IRQs required for hard stalls");
+}
+
+// The profile rows (the log writer's thread, every round): sample count per process (top eight), then for the two busiest processes their
+// hottest 1 MiB regions and hottest PCs (u = user, k = kernel PC, low 40 bits; offsets are resolved offline against the images' bases).
+static void bp_heap_sort(uint64_t *v,size_t n) {
+  for(size_t start=n/2;start-->0;)for(size_t root=start;;){size_t c=2*root+1;if(c>=n)break;if(c+1<n && v[c+1]>v[c])++c;if(v[root]>=v[c])break;uint64_t t=v[root];v[root]=v[c];v[c]=t;root=c;}
+  for(size_t end=n;end>1;){--end;uint64_t t=v[0];v[0]=v[end];v[end]=t;
+    for(size_t root=0;;){size_t c=2*root+1;if(c>=end)break;if(c+1<end && v[c+1]>v[c])++c;if(v[root]>=v[c])break;t=v[root];v[root]=v[c];v[c]=t;root=c;}}
+}
+static uint64_t bp_prof_snap[BpProfSamples],bp_prof_rank[BpProfSamples];
+size_t boot_progress_profile_rows(char *out,size_t cap) {
+  const uint32_t head=__atomic_load_n(&bp_prof_head,__ATOMIC_RELAXED);
+  const size_t n=head<BpProfSamples?head:BpProfSamples;
+  size_t at=0;
+#define BP_ROW(...) do{int w=snprintf(out+at,cap>at?cap-at:0,__VA_ARGS__);if(w>0)at+=(size_t)w;if(at>=cap)at=cap?cap-1:0;}while(0)
+  if(!n || cap<64)return 0;
+  memcpy(bp_prof_snap,bp_prof,n*sizeof(uint64_t));
+  bp_heap_sort(bp_prof_snap,n);
+  // per process: (count << 16 | pid), ranked
+  size_t procs=0;
+  for(size_t i=0;i<n;){size_t j=i;const uint64_t pid=bp_prof_snap[i]>>48;while(j<n && bp_prof_snap[j]>>48==pid)++j;bp_prof_rank[procs++]=((uint64_t)(j-i)<<16)|pid;i=j;}
+  bp_heap_sort(bp_prof_rank,procs);
+  BP_ROW("PS samples=%u kept=%lu |",head,(unsigned long)n);
+  for(size_t k=0;k<8 && k<procs;k++)BP_ROW(" p%llu:%llu",bp_prof_rank[procs-1-k]&0xffff,bp_prof_rank[procs-1-k]>>16);
+  BP_ROW("\n");
+  uint64_t top[2]={procs?bp_prof_rank[procs-1]&0xffff:0,procs>1?bp_prof_rank[procs-2]&0xffff:0};
+  for(unsigned t=0;t<2 && t<procs;t++) {
+    const uint64_t pid=top[t];
+    size_t first=0;while(first<n && bp_prof_snap[first]>>48!=pid)++first;
+    size_t last=first;while(last<n && bp_prof_snap[last]>>48==pid)++last;
+    size_t kernel=0;for(size_t i=first;i<last;i++)kernel+=(bp_prof_snap[i]>>47)&1;
+    BP_ROW("PF p%llu n=%lu kernel=%lu\n",pid,(unsigned long)(last-first),(unsigned long)kernel);
+    // regions of 1 MiB: (count << 32 | kernel << 27 | pc >> 20 (27 bits)), ranked; a region prints as its MiB number (pc >> 20)
+    size_t m=0;
+    for(size_t i=first;i<last;){const uint64_t key=(bp_prof_snap[i]>>20)&0xfffffff;size_t j=i;while(j<last && ((bp_prof_snap[j]>>20)&0xfffffff)==key)++j;
+      bp_prof_rank[m++]=((uint64_t)(j-i)<<32)|key;i=j;}
+    bp_heap_sort(bp_prof_rank,m);
+    BP_ROW("PR");
+    for(size_t k=0;k<24 && k<m;k++){const uint64_t e=bp_prof_rank[m-1-k];BP_ROW(" %c%llx:%llu",(e>>27)&1?'k':'u',e&0x7ffffff,e>>32);if(k%8==7 && k+1<24 && k+1<m)BP_ROW("\nPR");}
+    BP_ROW("\n");
+    // PCs: (count << 40 | kernel << 39 | pc low 39 bits), ranked
+    m=0;
+    for(size_t i=first;i<last;){const uint64_t key=bp_prof_snap[i]&((1ull<<48)-1);size_t j=i;while(j<last && (bp_prof_snap[j]&((1ull<<48)-1))==key)++j;
+      const uint64_t count=(j-i)>0xffffff?0xffffff:(j-i);bp_prof_rank[m++]=(count<<40)|(((key>>47)&1)<<39)|(key&((1ull<<39)-1));i=j;}
+    bp_heap_sort(bp_prof_rank,m);
+    const size_t want=t?40:80;
+    for(size_t k=0;k<want && k<m;k++){const uint64_t e=bp_prof_rank[m-1-k];if(k%7==0)BP_ROW(k?"\nPP":"PP");
+      BP_ROW(" %c%llx:%llu",(e>>39)&1?'k':'u',e&((1ull<<39)-1),e>>40);}
+    BP_ROW("\n");
+  }
+  // Kernel callers: the four hottest kernel PCs of all processes, each with its six most frequent (return 1, return 2) pairs and the
+  // third return address of one such sample. PK <pc low 32 bits>:<samples> then <r1>/<r2>/<r3>:<samples>.
+  {
+    const uint32_t khead=__atomic_load_n(&bp_kern_head,__ATOMIC_RELAXED);
+    const size_t kn=khead<BpKernSamples?khead:BpKernSamples;
+    for(size_t i=0;i<kn;i++)bp_prof_snap[i]=((uint64_t)bp_kern[i][0]<<32)|i;
+    bp_heap_sort(bp_prof_snap,kn);
+    size_t m=0;
+    for(size_t i=0;i<kn;){size_t j=i;while(j<kn && bp_prof_snap[j]>>32==bp_prof_snap[i]>>32)++j;bp_prof_rank[m++]=((uint64_t)(j-i)<<32)|(uint64_t)i;i=j;}
+    bp_heap_sort(bp_prof_rank,m);
+    for(size_t k=0;k<4 && k<m;k++) {
+      const uint64_t e=bp_prof_rank[m-1-k];const size_t first=(size_t)(e&0xffffffff),count=(size_t)(e>>32);
+      BP_ROW("PK %x:%lu",(unsigned)(bp_prof_snap[first]>>32),(unsigned long)count);
+      // chains of this PC into the free tail of bp_prof_rank (above the m ranked PCs): (r1 << 32 | r2), sorted, grouped
+      uint64_t *chain=bp_prof_rank+m;size_t c=0;
+      for(size_t i=first;i<first+count && m+c<BpProfSamples;i++){const uint32_t *x=bp_kern[bp_prof_snap[i]&0xffffffff];chain[c++]=((uint64_t)x[1]<<32)|x[2];}
+      bp_heap_sort(chain,c);
+      // groups as (count << 40 | first index); the 64 largest are kept
+      uint64_t groups[64];size_t g=0;
+      for(size_t i=0;i<c;){size_t j=i;while(j<c && chain[j]==chain[i])++j;
+        const uint64_t key=((uint64_t)(j-i)<<40)|i;
+        if(g<64)groups[g++]=key;else{size_t lo=0;for(size_t q=1;q<64;q++)if(groups[q]<groups[lo])lo=q;if(key>groups[lo])groups[lo]=key;}
+        i=j;}
+      bp_heap_sort(groups,g);
+      for(size_t q=0;q<6 && q<g;q++){const uint64_t ge=groups[g-1-q];const uint64_t pair=chain[ge&0xffffffffff];
+        uint32_t r3=0;for(size_t i=first;i<first+count;i++){const uint32_t *x=bp_kern[bp_prof_snap[i]&0xffffffff];if(x[1]==(uint32_t)(pair>>32) && x[2]==(uint32_t)pair){r3=x[3];break;}}
+        BP_ROW(" %x/%x/%x:%llu",(unsigned)(pair>>32),(unsigned)pair,r3,ge>>40);}
+      BP_ROW("\n");
+    }
+  }
+#undef BP_ROW
+  return at;
 }
