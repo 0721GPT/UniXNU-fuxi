@@ -36,7 +36,7 @@ The boot chain reaches XNU. This table records user-facing device support from t
 | Wi-Fi | ❌ | |
 | Bluetooth | ❌ | |
 | Camera | ❌ | |
-| GPU | ❌ | |
+| GPU | ⚠️ | Commands, native 4K SMMU and scanout copy work. Shader compilation is slow and no complete precompiled UI pack exists. |
 | USB | ❌ | |
 | Audio | ❌ | |
 | Sensors | ❌ | |
@@ -44,7 +44,7 @@ The boot chain reaches XNU. This table records user-facing device support from t
 | MiPPS | ❌ | |
 | Suspend and resume | ❌ | |
 
-✅ available, ❌ not available.
+✅ available, ⚠️ partial, ❌ not available. The GPU details are in the [Adreno 740 driver](https://unixnu.com/drivers/native-adreno) page.
 
 ## License
 
