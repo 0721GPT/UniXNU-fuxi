@@ -17,6 +17,8 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+if not (ROOT / 'scripts/read-sheng-log.py').is_file():
+    ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 reader = __import__('read-sheng-log')
 
