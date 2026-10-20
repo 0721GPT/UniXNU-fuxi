@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+from mesa_patch_identity import validate_recorded_patches
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--probe', action='store_true', help='Compile and roundtrip the source-bound A740 synthetic vertex fixture')
@@ -46,28 +47,14 @@ if not (source / '.git').exists():
 if run(['git', '-C', source, 'rev-parse', 'HEAD']) != pins['mesa']['commit'] or \
         run(['git', '-C', source, 'rev-parse', 'HEAD^{tree}']) != pins['mesa']['tree']:
     raise SystemExit('Pinned Mesa commit/tree differs')
-for name in pins['patches']:
-    patch = ROOT / name
-    applied = subprocess.run(['git', '-C', source, 'apply', '--check', '--reverse', patch], capture_output=True)
-    if applied.returncode:
-        run(['git', '-C', source, 'apply', '--check', patch])
-        run(['git', '-C', source, 'apply', patch])
-# The working tree must be exactly the recorded patches: reverse them all (newest first) and require a clean tree, then
-# re-apply them in order. A comparison of concatenated per-patch diffs would break once two patches touch one file.
-def working_tree_is_patches():
-    done = []
-    try:
-        for name in reversed(pins['patches']):
-            run(['git', '-C', source, 'apply', '--reverse', ROOT / name])
-            done.append(name)
-        return subprocess.run(['git', '-C', source, 'diff', '--quiet'], capture_output=True).returncode == 0
-    except subprocess.CalledProcessError:
-        return False
-    finally:
-        for name in reversed(done):
-            run(['git', '-C', source, 'apply', ROOT / name])
-if not working_tree_is_patches():
-    raise SystemExit('Mesa working changes must match the exact recorded patches')
+# A pristine checkout can receive the whole sequence once. Existing work must
+# equal all recorded patches; verify overlapping patches on a temporary copy.
+clean = subprocess.run(['git', '-C', source, 'diff', '--quiet', 'HEAD'], capture_output=True).returncode == 0
+extras = run(['git', '-C', source, 'ls-files', '--others', '--exclude-standard'])
+if clean and not extras:
+    for name in pins['patches']:
+        run(['git', '-C', source, 'apply', ROOT / name])
+validate_recorded_patches(ROOT, source, pins)
 
 if not (venv / 'bin/python').exists():
     run([sys.executable, '-m', 'venv', venv])
