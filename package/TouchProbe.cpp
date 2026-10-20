@@ -13,11 +13,12 @@
 #include <string.h>
 #include <libkern/c++/OSSharedPtr.h>
 #include <kern/thread.h>
+#include <kern/clock.h>
 #include <pexpert/pexpert.h>
 extern "C" {
-#include "../../drivers/NativeGeniSpi/GeniSpi.h"
-#include "../../drivers/NativeNovatekTouch/NvtProtocol.h"
-#include "../../drivers/NativeNovatekTouch/NvtTouchCore.h"
+#include "GeniSpi.h"
+#include "NvtProtocol.h"
+#include "NvtTouchCore.h"
 #include "TouchBoard.h"
 #include "SmmuBypass.h"
 extern const uint8_t native_touch_firmware[] __attribute__((weak_import));
@@ -36,6 +37,12 @@ volatile int native_touch_last_x = -1, native_touch_last_y = -1;
 volatile uint32_t native_touch_seq;
 volatile uint32_t native_touch_count;
 volatile int native_touch_xs[NVT_SLOTS], native_touch_ys[NVT_SLOTS], native_touch_ids[NVT_SLOTS];
+// Finished strokes as published (int-150, for edge gestures that did nothing in int-148/149): a ring of {start ms, duration ms, first x, first y,
+// last x, last y, frames} in published units (0.1 px, y already mirrored), and the extent every published contact reached {min x, max x,
+// min y, max y}. Read by kits/sheng BootLog.c.
+volatile int32_t native_touch_strokes[16][7];
+volatile uint32_t native_touch_stroke_count;
+volatile int32_t native_touch_extent[4] = {0x7fffffff, -1, 0x7fffffff, -1};
 }
 
 namespace {
@@ -273,7 +280,46 @@ void rows(const Session &s) {
         s.spi.snap_dma_rxin, s.smmuSlot, s.smmuBank, s.smmuErr, (unsigned long long)s.dmaPhys);
 }
 
+struct Stroke {int id, x0, y0, x1, y1, frames; uint64_t t0;};
+Stroke strokes[NVT_SLOTS];
+unsigned strokeCount;
+uint32_t touchMs() {
+    uint64_t f = 0; __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(f));
+    return (uint32_t)(mach_absolute_time() / ((f ? f : 19200000) / 1000));
+}
+void trackStrokes(unsigned count, const int *ids, const int *xs, const int *ys) {
+    const uint32_t now = touchMs();
+    for (unsigned i = 0; i < count; ++i) {
+        if (xs[i] < native_touch_extent[0]) native_touch_extent[0] = xs[i];
+        if (xs[i] > native_touch_extent[1]) native_touch_extent[1] = xs[i];
+        if (ys[i] < native_touch_extent[2]) native_touch_extent[2] = ys[i];
+        if (ys[i] > native_touch_extent[3]) native_touch_extent[3] = ys[i];
+        unsigned k = 0;
+        while (k < strokeCount && strokes[k].id != ids[i]) ++k;
+        if (k == strokeCount) {
+            if (strokeCount == NVT_SLOTS) continue;
+            strokes[strokeCount++] = {ids[i], xs[i], ys[i], xs[i], ys[i], 0, now};
+        }
+        strokes[k].x1 = xs[i]; strokes[k].y1 = ys[i]; ++strokes[k].frames;
+    }
+    for (unsigned k = 0; k < strokeCount;) {
+        bool live = false;
+        for (unsigned i = 0; i < count && !live; ++i) live = ids[i] == strokes[k].id;
+        if (live) {++k; continue;}
+        volatile int32_t *r = native_touch_strokes[native_touch_stroke_count & 15];
+        r[0] = (int32_t)(uint32_t)strokes[k].t0; r[1] = (int32_t)(now - (uint32_t)strokes[k].t0);
+        r[2] = strokes[k].x0; r[3] = strokes[k].y0; r[4] = strokes[k].x1; r[5] = strokes[k].y1; r[6] = strokes[k].frames;
+        native_touch_stroke_count = native_touch_stroke_count + 1;
+        strokes[k] = strokes[--strokeCount];
+    }
+}
+
 void publish(unsigned count, const nvt_contact *c) {
+    int ids[NVT_SLOTS], xs[NVT_SLOTS], ys[NVT_SLOTS];
+    for (unsigned i = 0; i < count && i < NVT_SLOTS; ++i) {
+        ids[i] = c[i].tracking_id; xs[i] = c[i].x; ys[i] = c[i].y < 0 ? c[i].y : (20319 - (c[i].y > 20319 ? 20319 : c[i].y));
+    }
+    trackStrokes(count < NVT_SLOTS ? count : NVT_SLOTS, ids, xs, ys);
     native_touch_seq = native_touch_seq + 1;
     __asm__ volatile("dmb ish" ::: "memory");
     native_touch_count = count;

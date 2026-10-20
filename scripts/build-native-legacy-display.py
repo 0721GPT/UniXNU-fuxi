@@ -214,6 +214,7 @@ reset_obj=OUT/'BootReset.o'
 run([str(reset_source) if arg==str(process_source) else str(reset_obj) if arg==str(process_obj) else arg for arg in process_cmd]+['-I',str(ROOT/'kits/sheng')],cwd=pr['directory'])
 # Default-off touch bring-up: C++ board probe plus the generic GENI SPI and Novatek protocol/touch libraries, compiled with the
 # kernel C flags, and the firmware object generated from the copy kept outside Git.
+cmd+=['-I',str(ROOT/'kits/sheng'),'-I',str(ROOT/'drivers/NativeGeniSpi'),'-I',str(ROOT/'drivers/NativeNovatekTouch')]
 touch_dir=OUT/'touch';touch_dir.mkdir(exist_ok=True)
 touch_cpp=ROOT/'kits/sheng/TouchProbe.cpp';touch_cpp_obj=touch_dir/'TouchProbe.o'
 cpufreq_cpp=ROOT/'kits/sheng/CpuFreqProbe.cpp';cpufreq_obj=touch_dir/'CpuFreqProbe.o'
