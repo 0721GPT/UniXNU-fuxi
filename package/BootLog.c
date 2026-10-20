@@ -44,6 +44,7 @@ extern volatile uint64_t native_adreno_vm_phase_us[2][8] __attribute__((weak_imp
 extern volatile uint32_t native_adreno_map_fail[7][2] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_pool_stats[8] __attribute__((weak_import));
 extern volatile uint32_t native_adreno_wc_audit[6] __attribute__((weak_import));
+extern volatile uint32_t native_touch_edge_stats[4] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_reassert_ticks __attribute__((weak_import));
 extern volatile uint64_t native_adreno_cache_stats[5] __attribute__((weak_import));
 // NativeAdrenoPublish.cpp: per process name that opened the GPU, and the processes that asked the Metal discovery for its plugin.
@@ -350,6 +351,13 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
              &native_adreno_coherent_skips ? native_adreno_coherent_skips[1] : 0, &native_adreno_coherent_skips ? native_adreno_coherent_skips[2] : 0,
              &native_adreno_coherent_skips ? native_adreno_coherent_skips[3] : 0,
              (unsigned long long)(&native_gpu_idle_sleeps ? native_gpu_idle_sleeps : 0), (unsigned long long)(&native_gpu_idle_spins ? native_gpu_idle_spins : 0));
+    at = put(out, at, cap, row, sizeof row);
+  }
+  // Edge contacts (drivers/NativeHidInput edge::): wrapper installed, contacts begun, of them from an edge, events skipped.
+  if (&native_touch_edge_stats) {
+    char row[100];
+    snprintf(row, sizeof row, "[touch edge] installed=%u contacts=%u from_edge=%u skipped=%u", native_touch_edge_stats[0],
+             native_touch_edge_stats[1], native_touch_edge_stats[2], native_touch_edge_stats[3]);
     at = put(out, at, cap, row, sizeof row);
   }
   // The submissions' write-combine work: audits, IB lines compared and found dirty, pages set back to write-combined, the re-assertion's
