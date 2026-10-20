@@ -28,6 +28,17 @@ extern volatile unsigned boot_progress_banner_rows __attribute__((weak_import));
 extern char boot_progress_ext[8][48] __attribute__((weak_import));
 extern char boot_progress_ext_wide[2][112] __attribute__((weak_import));
 extern char boot_progress_panic_text[256] __attribute__((weak_import));
+extern volatile uint32_t native_data_persist_state __attribute__((weak_import));
+extern volatile uint32_t native_data_persist_header __attribute__((weak_import));
+extern volatile uint32_t native_data_persist_gpt __attribute__((weak_import));
+extern volatile uint32_t native_data_persist_gpt_after __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_pages __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_loaded __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_writes __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_syncs __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_errors __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_first_lba __attribute__((weak_import));
+extern volatile uint64_t native_data_persist_present __attribute__((weak_import));
 extern const char *boot_progress_tag(void) __attribute__((weak_import));
 extern unsigned boot_ui_trace_role_rows(unsigned, char [][120], unsigned, unsigned) __attribute__((weak_import));
 extern unsigned boot_ui_trace_hot_rows(char [][120], unsigned) __attribute__((weak_import));
@@ -176,6 +187,16 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
   if (&boot_progress_ext) {
     at = put(out, at, cap, "[ext]", 8);
     for (unsigned i = 0; i < 8; ++i) {char row[56]; snprintf(row, sizeof row, "X%u %.47s", i, boot_progress_ext[i]); at = put(out, at, cap, row, sizeof row);}
+  }
+  // The Data store's counters (NativeRamBlock), a row of their own: the ext slots they once shared are taken by other kits.
+  if (&native_data_persist_state && native_data_persist_state) {
+    char row[160];
+    snprintf(row, sizeof row, "D st=%u hdr=%u gpt=%x/%x lba=%llx pres=%llu ld=%llu wr=%llu cm=%llu er=%llu pages=%llu", native_data_persist_state,
+             native_data_persist_header, native_data_persist_gpt, native_data_persist_gpt_after, (unsigned long long)native_data_persist_first_lba,
+             (unsigned long long)native_data_persist_present, (unsigned long long)native_data_persist_loaded, (unsigned long long)native_data_persist_writes,
+             (unsigned long long)native_data_persist_syncs, (unsigned long long)native_data_persist_errors, (unsigned long long)native_data_persist_pages);
+    at = put(out, at, cap, "[data]", 8);
+    at = put(out, at, cap, row, sizeof row);
   }
   if (&boot_progress_ext_wide)
     for (unsigned i = 0; i < 2; ++i) {char row[120]; snprintf(row, sizeof row, "W%u %.111s", i, boot_progress_ext_wide[i]); at = put(out, at, cap, row, sizeof row);}
