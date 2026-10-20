@@ -16,6 +16,9 @@ OUT = ROOT / 'build/native-touch'
 def main():
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
     data = path.read_bytes() if path.is_file() else b''
+    if not data:
+        print(f'WARNING: no touch firmware at {path}: the image will have no touch. '
+              'Run scripts/extract-files.py in the device repository (proprietary-files.txt).', file=sys.stderr)
     OUT.mkdir(parents=True, exist_ok=True)
     lines = ['/* Generated; contains vendor firmware, do not commit. */', '#include <stdint.h>']
     lines.append(f'const uint32_t native_touch_firmware_size = {len(data)};')
