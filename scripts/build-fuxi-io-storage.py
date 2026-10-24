@@ -59,6 +59,9 @@ for source in sources:
         '-I', str(SOURCE),
         # prepare-storage-headers.py stages the public IOKit/storage headers here.
         '-I', str(ROOT / 'build' / 'storage-abi' / 'include'),
+        # RootDomain.h reaches for IOPMPrivate.h, a private XNU header that the
+        # export pass does not install; the working tree still has it.
+        '-I', str(ROOT / '.cache' / 'xnu-work' / 'iokit'),
         '-Wno-everything',
     ])
 
