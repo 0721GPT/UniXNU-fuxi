@@ -31,8 +31,11 @@ fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustC
 # "087-86593-047.dmg" = ""     # Cryptex1,SystemOS
 
 [userdata]
-first_lba = 0x2f3840
-last_lba = 0x3d0abfa
+# Xiaomi 13 (fuxi) userdata is /dev/block/sda32: first sector 24887808, 469917144
+# sectors of 512 bytes, i.e. 240.6 GiB. These values are 4 KiB LBAs, so both numbers
+# are the sysfs values divided by 8.
+first_lba = 0x2f7840
+last_lba = 0x3afc3fa
 lba_bytes = 4096
 windows = [
   { name = "OS", component = "OS" },
