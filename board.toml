@@ -97,6 +97,12 @@ slide = "-0x1000000"
 # prelink stopped with "Early security initializer outside original module code".
 # Leaving it empty skips the patch (early_security_init or {}).
 roots = [
+  # com.apple.kec.corecrypto is left out: fuxi_defconfig bootstraps crypto from
+  # source (CONFIG_XNU_CRYPTO_BOOTSTRAP="source"), so the kernel already carries
+  # corecrypto_kext_start() and its own registration order. Keeping the prelinked
+  # Apple kext as well runs a second entropy initialisation whose SHA512_Init calls
+  # this kernel's code before g_crypto_funcs is set, which is the data abort at
+  # _SHA512_Init + 0x10 with far 0x40.
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.driver.AppleARMPlatform",
   "com.apple.driver.AppleARMWatchdogTimer",
@@ -121,7 +127,6 @@ roots = [
   "com.apple.iokit.IOStorageFamily",
   "com.apple.iokit.IOSurface",
   "com.apple.kec.Libm",
-  "com.apple.kec.corecrypto",
   "com.apple.kext.AppleMatch",
   "com.apple.kext.CoreTrust",
   "com.apple.security.AppleImage4",
