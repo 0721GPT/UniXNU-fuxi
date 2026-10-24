@@ -188,13 +188,17 @@ kernel_args = [
   "boot-progress=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
-  "native-ufs-root=1",
   "armcpu-diagnostics=1",
   "armcpu-spi-ipi=1",
   "-no_slto_panic",
   "ml-timeout-lock-panic-scale=40",
-  "fuxi-data-persist=2",
 ]
+
+# native-ufs-root=1 is left out for the first boot. The payload builder requires a
+# PMGR driver for it ("native UFS root boot needs exactly one sheng-pmgr=2; the
+# unchanged target AMFI otherwise panics with No PMGR"), and the only PMGR archive in
+# the tree is sheng's board table, which we removed with the other sheng drivers.
+# Without a root device XNU still boots far enough to print its console banner.
 
 [payload.adt]
 tool = "scripts/make-sheng-adt.py"
