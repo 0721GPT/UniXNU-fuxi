@@ -66,13 +66,13 @@ defconfig = "fuxi_defconfig"
 # The first boot died in _SHA512_Init (far 0x40) with the prelinked callers from the
 # 16.7.16 kernelcache, so fuxi_defconfig asks for CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 # and keeps every crypto call on the same implementation.
+#   NativeAES is dropped for now: build-xnu-4k-baseline.sh only allows it with
+#   CRYPTO_BOOTSTRAP=prelinked, which is the mode that crashed the first boot.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
-  "build-arm-driver.py NativeAES",
-  "build-native-aes-bindings.py",
   "build-arm-driver.py NativeUfs",
   "build-arm-driver.py NativeRamBlock",
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
