@@ -37,7 +37,8 @@ CONFIG_XNU_VERIFIED_ROOT_PROBE=n
 # The GPU is the same Adreno 740 as the sheng board and the GMU windows are SoC level
 # addresses, so the qualified driver is reusable. ShengGmu.h ships in kits/sheng, and
 # the offline probe validates the firmware before the kernel can reach IOKit services.
-CONFIG_XNU_ADRENO_FIRMWARE_PROBE=y
+# The offline probe needs libAdrenoFirmwareProbe.a, which no fuxi script builds yet.
+CONFIG_XNU_ADRENO_FIRMWARE_PROBE=n
 CONFIG_XNU_NATIVE_ADRENO=y
 # The legacy display archive runs a qualification audit pinned to the sheng kernelcache.
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
