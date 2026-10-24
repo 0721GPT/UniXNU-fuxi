@@ -49,6 +49,9 @@ defconfig = "fuxi_defconfig"
 #                                        and that audit needs the live guest metadata snapshot
 #   build-boot-progress.py               its guard requires the audited UFS/owner-root and virtio build
 # fuxi boots from UFS, so the virtio path is not needed to reach a console.
+# Also dropped: build-arm-driver.py NativeAdreno and its two kit steps. NativeAdrenoGmuConfig.h
+# includes "ShengGmu.h", which ships in the sheng device package/; fuxi needs its own GMU
+# table before the GPU can be built.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -59,9 +62,6 @@ archives = [
   "build-arm-driver.py NativeUfs",
   "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
-  "build-arm-driver.py NativeAdreno",
-  "build-native-adreno-kits.py",
-  "build-native-adreno-accelerator.py",
   "build-native-legacy-display.py",
 ]
 
