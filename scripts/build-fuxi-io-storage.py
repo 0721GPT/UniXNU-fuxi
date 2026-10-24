@@ -22,7 +22,14 @@ SOURCE = ROOT / 'refer' / 'IOStorageFamily'
 # BlockStorageDeviceDriverKit needs DriverKit headers that a kernel build does not
 # provide, and IOUserBlockStorageDevice_kext is the user-space bridge. Neither is
 # needed for NativeUfs.
-SKIP = {'IOUserBlockStorageDevice_kext.cpp'}
+SKIP = {
+    'IOUserBlockStorageDevice_kext.cpp',
+    # IOBlockStorageDriver.cpp includes IOUserBlockStorageDevice_kext.h, which needs
+    # the header that DriverKit generates from BlockStorageDeviceDriverKit/*.iig. A
+    # kernel build has no DriverKit. NativeUfs subclasses IOBlockStorageDevice, not
+    # IOBlockStorageDriver, so the class only matters if something else references it.
+    'IOBlockStorageDriver.cpp',
+}
 
 record = json.loads(RECORD.read_text().strip().rstrip(','))
 out = ROOT / 'build/fuxi-io-storage'
