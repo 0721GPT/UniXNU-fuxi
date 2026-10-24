@@ -85,7 +85,12 @@ tool = "kits/NativePrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
 kernelcache_sha256 = "2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221"
 slide = "-0x1000000"
-early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+# early_security_init is deliberately absent. emit_prelink only patches the AMFI
+# initializer when the board supplies its address, and validates that the address
+# sits inside original module code. Neither the sheng value (iPadOS 17.7.11) nor the
+# address published by Xyvern08371/unixnu-fuxi is valid for this kernelcache, so the
+# prelink stopped with "Early security initializer outside original module code".
+# Leaving it empty skips the patch (early_security_init or {}).
 roots = [
   "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.driver.AppleARMPlatform",
