@@ -52,6 +52,13 @@ defconfig = "fuxi_defconfig"
 # Also dropped: build-arm-driver.py NativeAdreno and its two kit steps. NativeAdrenoGmuConfig.h
 # includes "ShengGmu.h", which ships in the sheng device package/; fuxi needs its own GMU
 # table before the GPU can be built.
+#   build-native-legacy-display.py        runs scripts/audit-mobile-graphics-legacy.py, which pins the
+#                                        sha256 of IOMobileGraphicsFamily from the sheng target iPadOS
+#                                        17.7.11 kernelcache and wants a bootstrap candidate in
+#                                        build/native-prelink. fuxi targets iPhone X iOS 16.7.16, so the
+#                                        pin has to be re-derived before the display driver can build.
+# Milestone 1 is a kernel that links at all; the display and GPU come back once the audit pins are
+# recomputed for the 16.7.16 kernelcache.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -62,7 +69,6 @@ archives = [
   "build-arm-driver.py NativeUfs",
   "build-arm-driver.py NativeRamBlock",
   "build-libpthread-kernel.py",
-  "build-native-legacy-display.py",
 ]
 
 [kernel.prelink]
