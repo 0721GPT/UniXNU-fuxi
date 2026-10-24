@@ -14,22 +14,21 @@ kit = "fuxi"                          # the package/ of this repository appears 
 # The target OS image: the unchanged iPad7,1 iPadOS 17.7.11 restore image. Give --ipsw PATH to use a local file; without
 # it the remote url is read with range requests, only the members that are needed.
 [ipsw]
-url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
-product = "iPad7,1"
-version = "17.7.11"
-build = "21H461"
-device_class = "j120ap"
-chip_id = 0x8011
-board_id = 12
+url = "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+product = "iPhone10,3"
+version = "16.7.16"
+build = "20H392"
+device_class = "d22ap"
+chip_id = 0x8015
+board_id = 14
 fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]   # the small components
 
-[ipsw.sha256]
-"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
-"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+# The two disk images behind the userdata windows. Pins are added once the userdata step is run;
+# the kernel and payload steps never fetch them.
+# [ipsw.sha256]
+# "087-86698-044.dmg" = ""     # OS
+# "087-86593-047.dmg" = ""     # Cryptex1,SystemOS
 
-# The raw image for the userdata partition: the OS and SystemOS disk images of the IPSW behind a manifest.
-# TODO(fuxi): first_lba and last_lba are still the sheng numbers. Read the GPT entry "userdata" of LUN 0 on
-# the phone (`cat /sys/block/sda/sda32/start /sys/block/sda/sda32/size`) and divide by 8 for 4096-byte LBAs.
 [userdata]
 first_lba = 0x2f3840
 last_lba = 0x3d0abfa
@@ -68,7 +67,7 @@ archives = [
 [kernel.prelink]
 tool = "kits/NativePrelink/emit_prelink.py"
 kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
-kernelcache_sha256 = "f18b4df865405f2a287b84977d7aca745e056d656d9fc9df1662970ce2969de7"
+kernelcache_sha256 = "2ec297bac95bcba01046fd0148e97e7e5885c05a6c18827f39f534ba375c1221"
 slide = "-0x1000000"
 early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
 roots = [
@@ -139,13 +138,13 @@ BUILDID_STRING = "fuxi-research"
 volume = "FUXIESP"
 size_mib = 192
 loader = "firmware"
-title = "fuxi first boot: source 4K XNU to console"
+title = "fuxi: iPhone X iOS 16.7.16"
 dram_size = "0x80000000"             # SMEM RAM table, SM8550 is shared with sheng
 panic_screen = true
 # The original static/System trust caches of the same IPSW.
 trust_cache_sha256 = [
-  "7416ca4f8377146626bb284e2133c76bee6cb4e3ee0af5d648b186235a7323a7",
-  "8900d6a93d7a59ce1a872a5c081e559f4240a218f97e12d44d22dda46644d68f",
+  "63e01c03b31e1532a5581a24865490673f0b5c297b0199fe0095637c6100ef4b",   # StaticTrustCache
+  "9cc478fe3525e2683b5b9ea1eea0851eaebebdab21d206556233400e59d2e361",   # Cryptex1,SystemTrustCache
 ]
 kernel_args = [
   "-v",
