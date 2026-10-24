@@ -39,7 +39,9 @@ CONFIG_XNU_VERIFIED_ROOT_PROBE=n
 # the offline probe validates the firmware before the kernel can reach IOKit services.
 # The offline probe needs libAdrenoFirmwareProbe.a, which no fuxi script builds yet.
 CONFIG_XNU_ADRENO_FIRMWARE_PROBE=n
-CONFIG_XNU_NATIVE_ADRENO=y
+# The driver needs libNativeAdreno.a, a device-side archive no fuxi script builds yet.
+# Park it: nothing exercises the GPU until the kernel reaches IOKit services.
+CONFIG_XNU_NATIVE_ADRENO=n
 # The legacy display archive runs a qualification audit pinned to the sheng kernelcache.
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
