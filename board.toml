@@ -62,9 +62,11 @@ defconfig = "fuxi_defconfig"
 #                                        pin has to be re-derived before the display driver can build.
 # Milestone 1 is a kernel that links at all; the display and GPU come back once the audit pins are
 # recomputed for the 16.7.16 kernelcache.
+# corecrypto is not built from source here. The target kernelcache already carries
+# Apple's corecrypto and CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked" keeps using it; mixing
+# a source-built corecrypto with the prelinked callers crashed the first boot:
+#   Kernel data abort at _SHA512_Init + 0x10, lr _ccgcm_one_shot_legacy + 0x214, far 0x40
 archives = [
-  "build-corecrypto-14.py",
-  "build-corecrypto-14.py --namespace",
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-arm-driver.py NativeAES",
