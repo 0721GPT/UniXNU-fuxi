@@ -34,10 +34,11 @@ CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_OWNER_ROOT_AUDIT=n
 CONFIG_XNU_OWNER_ROOT_TRUST=n
 CONFIG_XNU_VERIFIED_ROOT_PROBE=n
-CONFIG_XNU_BOOT_PROGRESS=n
 # No GMU table for fuxi yet: NativeAdrenoGmuConfig.h wants ShengGmu.h.
 CONFIG_XNU_NATIVE_ADRENO=n
 # The legacy display archive runs a qualification audit pinned to the sheng kernelcache.
 CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
 CONFIG_XNU_NATIVE_MOBILE_DISPLAY=n
 CONFIG_XNU_ARMVIRT_PLATFORM=n
+# Live kernel status page on the framebuffer; needs the relaxed guard above.
+CONFIG_XNU_BOOT_PROGRESS=y
