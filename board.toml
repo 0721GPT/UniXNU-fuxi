@@ -41,8 +41,14 @@ windows = [
 [kernel]
 defconfig = "fuxi_defconfig"
 # Archive builders of the kernel step, in order. Each is a script of the build tree with its arguments.
-# build-sheng-platform-power.py is left out: its PMGR driver matches sheng's power domains, and fuxi has
-# no equivalent driver yet, so CONFIG_XNU_SHENG_PMGR stays off in fuxi_defconfig.
+# Bring-up list. Dropped from the sheng set:
+#   build-sheng-platform-power.py        sheng PMGR power domains, no fuxi port
+#   build-arm-driver.py NativeVirtioBlock + the two build-native-virtio-bindings.py steps
+#   build-mockfs-fixture.py              both need build/storage-abi/interface-audit.json,
+#                                        which only scripts/audit-storage-interface.py writes,
+#                                        and that audit needs the live guest metadata snapshot
+#   build-boot-progress.py               its guard requires the audited UFS/owner-root and virtio build
+# fuxi boots from UFS, so the virtio path is not needed to reach a console.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
@@ -51,12 +57,7 @@ archives = [
   "build-arm-driver.py NativeAES",
   "build-native-aes-bindings.py",
   "build-arm-driver.py NativeUfs",
-  "build-arm-driver.py NativeVirtioBlock",
   "build-arm-driver.py NativeRamBlock",
-  "build-native-virtio-bindings.py --component NativeRamBlock --directory build/native-ram-block",
-  "build-native-virtio-bindings.py --component NativeVirtioBlock",
-  "build-mockfs-fixture.py",
-  "build-boot-progress.py",
   "build-libpthread-kernel.py",
   "build-arm-driver.py NativeAdreno",
   "build-native-adreno-kits.py",
