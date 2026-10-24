@@ -383,3 +383,10 @@ FUXI_WEAK unsigned long native_wi_count;
 FUXI_WEAK unsigned long native_wi_log;
 FUXI_WEAK unsigned long native_wifi_stats;
 FUXI_WEAK unsigned long sheng_cpufreq_poll;
+
+/* Kernel-side boot progress hooks; these live in XNU objects, not in the kits. */
+FUXI_WEAK unsigned long native_owner_root_accepted;
+FUXI_WEAK unsigned long native_virtio_read_failures;
+FUXI_WEAK unsigned long native_virtio_read_requests;
+FUXI_WEAK unsigned long native_virtio_ready;
+FUXI_WEAK unsigned long native_virtio_verified_blocks;
