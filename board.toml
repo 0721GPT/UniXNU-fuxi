@@ -68,13 +68,14 @@ defconfig = "fuxi_defconfig"
 # and keeps every crypto call on the same implementation.
 #   NativeAES is dropped for now: build-xnu-4k-baseline.sh only allows it with
 #   CRYPTO_BOOTSTRAP=prelinked, which is the mode that crashed the first boot.
+#   NativeRamBlock follows it out: the build requires NATIVE_AES=1 for it. Neither is
+#   needed to boot without a root device.
 archives = [
   "build-corecrypto-14.py",
   "build-corecrypto-14.py --namespace",
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-arm-driver.py NativeUfs",
-  "build-arm-driver.py NativeRamBlock",
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
 # when their feature is off. Without it the link stops on native_legacy_display_probe,
 # boot_progress_poll, the verified-root chain and mockfs.
