@@ -55,7 +55,12 @@ for source in sources:
         elif value not in ('-MD', '-MP'):
             command.append(value)
         index += 1
-    command.extend(['-I', str(SOURCE), '-Wno-everything'])
+    command.extend([
+        '-I', str(SOURCE),
+        # prepare-storage-headers.py stages the public IOKit/storage headers here.
+        '-I', str(ROOT / 'build' / 'storage-abi' / 'include'),
+        '-Wno-everything',
+    ])
 
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (out / (source.stem + '.log')).write_text(result.stdout + result.stderr)
