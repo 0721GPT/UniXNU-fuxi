@@ -36,3 +36,14 @@ FUXI_WEAK int vr_xnu_crypto(void) { return 0; }
 FUXI_WEAK int mockfs_mountroot(void) { return 0; }
 FUXI_WEAK const unsigned char mockfs_vfsops[512] = { 0 };
 FUXI_WEAK const unsigned char mockfs_vnodeop_opv_desc[512] = { 0 };
+
+/* DriverKit user-server RPC (iokit/Kernel/IOUserServer.cpp, "optional iokitcpp").
+ * The prelink needs a native address for it because an original kext references it,
+ * and this kernel build has no iokitcpp objects. Nothing on the bring-up path drives
+ * a DriverKit user server, so a NULL-returning stub only has to satisfy the rebind.
+ */
+FUXI_WEAK void *IORPCMessageFromMach(void *message, int reply)
+{
+	(void)message; (void)reply;
+	return 0;
+}
