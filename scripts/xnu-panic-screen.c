@@ -216,7 +216,8 @@ static void hex (struct ctx *g, const char *label, u64 v)
 
 /* x0 = fmt as for panic(); x1 is set by the stub to the entry stack pointer. */
 __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
-  (const char *fmt, const u64 *args, u64 caller_x20, u64 caller_x23, u64 caller_x25, u64 caller_x27)
+  (const char *fmt, const u64 *args, u64 caller_x20, u64 caller_x23, u64 caller_x25,
+   u64 caller_x27, u64 route, u64 original_x6)
 {
   volatile struct vc_info *v = (volatile struct vc_info *)VINFO;
   struct ctx g;
@@ -258,7 +259,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
     g.log = (u8 *)PANIC_TEXT;
   }
   #ifdef FUXI_IMAGE4_DIAG
-  text (&g, "FIX057 diagnostics\n");
+  text (&g, "FIX058 diagnostics\n");
   /* Keep this optional renderer within the existing verified text padding.
    * The literal format and first argument slots are diagnostic data, labelled
    * explicitly, instead of pulling in the full printf parser. */
@@ -268,14 +269,12 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   hex (&g, " arg1=", args[1]);
   hex (&g, "\nLR=", caller);
   hex (&g, " earlyAllow=", early_allow);
-  hex (&g, "\nx20=", caller_x20);
-  hex (&g, " x23=", caller_x23);
+  hex (&g, "\nroute=", route);
+  hex (&g, " originalX6=", original_x6);
   hex (&g, "\nx25=", caller_x25);
   hex (&g, " x27=", caller_x27);
-  if (readable ((const char *)caller_x27, 0) && readable ((const char *)(caller_x27 + 0x37), 0)) {
-    hex (&g, "\nx27[0]=", *(volatile const u64 *)caller_x27);
-    hex (&g, " x27[30]=", *(volatile const u64 *)(caller_x27 + 0x30));
-  }
+  (void)caller_x20;
+  (void)caller_x23;
   #else
   format (&g, fmt, args);
   #endif
@@ -307,7 +306,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
 /* Entry from panic(): keep the stack pointer, which addresses the variadic arguments. */
 __attribute__((naked, noreturn, section(".text.a_entry"))) void panic_screen (const char *fmt)
 {
-  __asm__ volatile ("mov x1, sp\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tb panic_screen_main");
+  __asm__ volatile ("mov x1, sp\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tmov x7, x6\n\tmov x6, #0x50\n\tb panic_screen_main");
 }
 
 /* The real panic_trap_to_debugger signature takes (fmt, va_list *, ...).
@@ -317,7 +316,7 @@ __attribute__((naked, noreturn, section(".text.a_entry"))) void panic_screen (co
  */
 __attribute__((naked, noreturn, section(".text.a_common"))) void panic_screen_common (void)
 {
-  __asm__ volatile ("ldr x1, [x1]\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tb panic_screen_main");
+  __asm__ volatile ("ldr x1, [x1]\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tmov x7, x6\n\tmov x6, #0x43\n\tb panic_screen_main");
 }
 
 #include "Font.h"
