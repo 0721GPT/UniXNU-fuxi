@@ -8,11 +8,12 @@ CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
 # Use the prelinked Apple IOStorageFamily as the only storage-class provider.
-# Do not build/link libFuxiIOStorage.a alongside it: its class constructors
-# register IOBlockStorageDevice twice and panic before BSD initialization.
-CONFIG_XNU_NATIVE_UFS=n
+# NativeUfs subclasses those existing classes; it does not link a second copy
+# of IOStorageFamily.  FIX061 enables its read-only probe but not root mode.
+CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_TRUST_CACHE_RUNTIME=y
-# Source mockfs remains available for bring-up; this configuration has no native UFS root.
+# Source mockfs remains available for bring-up; FIX061 only qualifies native
+# UFS transport/GPT/manifest access and deliberately does not publish a root.
 CONFIG_XNU_SOURCE_MOCKFS=y
 CONFIG_XNU_SHENG_PMGR=y
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y

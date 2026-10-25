@@ -79,6 +79,12 @@ archives = [
   "build-corecrypto-14.py --namespace",
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
+  # FIX061 is a deliberately read-only fuxi UFS qualification build.  The
+  # NativeUfs probe adopts the SM8550 controller state left by firmware, reads
+  # LUN 0, validates the GPT, finds the userdata entry and inspects its first
+  # block.  Root publication remains disabled until this hardware checkpoint
+  # proves the fuxi controller/SMMU hand-off and the flashed SHNGROOT manifest.
+  "build-arm-driver.py NativeUfs",
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
 # when their feature is off. Without it the link stops on native_legacy_display_probe,
 # boot_progress_poll, the verified-root chain and mockfs.
@@ -172,7 +178,7 @@ BUILDID_STRING = "fuxi-research"
 volume = "FUXIESP"
 size_mib = 192
 loader = "firmware"
-title = "fuxi: iPhone X iOS 16.7.16"
+title = "FUXI FIX061 UFS READONLY"
 dram_size = "0x80000000"             # SMEM RAM table, SM8550 is shared with sheng
 panic_screen = true
 # The original static/System trust caches of the same IPSW.
@@ -200,6 +206,8 @@ kernel_args = [
   "offline-apfs-load=1",
   "boot-progress=2",
   "sheng-pmgr=2",
+  "native-ufs-probe=10",
+  "native-ufs-diagnostics=1",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
   "armcpu-diagnostics=1",
@@ -208,8 +216,9 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",
 ]
 
-# native-ufs-root=1 stays off. The guarded iPhone10,3 PMGR probe tests whether
-# the original nub can be published for AMFI; it supplies no UFS or power backend.
+# native-ufs-root=1 stays off in FIX061.  probe=10 always stops with a bounded
+# diagnostic panic after the read-only controller/GPT/manifest check; it never
+# publishes writable media and never writes to UFS.
 
 [payload.adt]
 tool = "scripts/make-sheng-adt.py"
