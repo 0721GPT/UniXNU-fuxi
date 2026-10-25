@@ -7,12 +7,12 @@ CONFIG_XNU_BUILD_ARCHIVES=y
 CONFIG_XNU_SOURCE_PTHREAD=y
 CONFIG_XNU_ARM_DT_PLATFORM=y
 CONFIG_XNU_ARMCPU=y
-# Parked while the board boots from the mockfs root: the storage classes collide
-# with the prelinked IOStorageFamily kext. Keep this setting in sync with board.toml archives.
+# Use the prelinked Apple IOStorageFamily as the only storage-class provider.
+# Do not build/link libFuxiIOStorage.a alongside it: its class constructors
+# register IOBlockStorageDevice twice and panic before BSD initialization.
 CONFIG_XNU_NATIVE_UFS=n
 CONFIG_XNU_TRUST_CACHE_RUNTIME=y
-# The fixture does not build with the local Xcode 26.2 toolchain (kfree_type type
-# assertion); the board boots from the UFS root, so the fixture is not needed.
+# Source mockfs remains available for bring-up; this configuration has no native UFS root.
 CONFIG_XNU_SOURCE_MOCKFS=y
 CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
 CONFIG_XNU_DT_PANIC_REGION=y
