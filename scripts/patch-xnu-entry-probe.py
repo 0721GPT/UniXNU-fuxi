@@ -253,11 +253,14 @@ def panic_common_entry(workdir, code, load):
              if len(parts := line.split()) == 3}
     entry = names.get('panic_screen_common')
     main = names.get('panic_screen_main')
-    if entry is None or main is None or not load <= entry <= load + len(code) - 8:
+    if entry is None or main is None or not load <= entry <= load + len(code) - 24:
         raise SystemExit('Common panic renderer entry is missing or out of bounds')
     at = entry - load
-    if code[at:at + 8] != struct.pack('<II', 0xf9400021, branch(entry + 4, main)):
-        raise SystemExit('Common panic entry does not dereference the Darwin va_list pointer and branch to the renderer')
+    expected = struct.pack('<6I', 0xf9400021,
+                           0xaa1403e2, 0xaa1703e3, 0xaa1903e4, 0xaa1b03e5,
+                           branch(entry + 20, main))
+    if code[at:at + len(expected)] != expected:
+        raise SystemExit('Common panic entry does not preserve the Darwin va_list and caller registers')
     return entry
 
 

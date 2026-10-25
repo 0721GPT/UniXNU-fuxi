@@ -214,39 +214,9 @@ static void hex (struct ctx *g, const char *label, u64 v)
   number (g, v, 16, 16, 1);
 }
 
-#ifdef FUXI_IMAGE4_DIAG
-/* Read-only evidence at the existing panic stop. No Image4 state is written. */
-static void image4_diagnostic (struct ctx *g)
-{
-  typedef int (*lookup_fn)(void *, const char *, void **);
-  typedef int (*property_fn)(void *, const char *, const void **, u32 *);
-  void *chosen = 0;
-  const void *value = 0;
-  u32 size = 0;
-  int status = ((lookup_fn)DT_LOOKUP)(0, "/chosen", &chosen);
-  hex (g, "\nDTlookup=", (u64)(u32)status);
-  if (status == 1 && chosen) {
-    status = ((property_fn)DT_PROPERTY)(chosen, "mix-n-match-prevention-status", &value, &size);
-    hex (g, "\nDTstatus=", (u64)(u32)status);
-    hex (g, " DTsize=", size);
-    if (status == 1 && size == 4 && readable ((const char *)value, 0) &&
-        readable ((const char *)value + 3, 0)) {
-      const u8 *b = (const u8 *)value;
-      hex (g, "\nDTmix=", (u64)b[0] | ((u64)b[1] << 8) | ((u64)b[2] << 16) | ((u64)b[3] << 24));
-    }
-  }
-  if (readable ((const char *)IMG4_ALLOW, 0))
-    hex (g, "\nIMG4allow=", *(volatile const u8 *)IMG4_ALLOW);
-  if (readable ((const char *)IMG4_CHIP, 0)) {
-    u64 chip = *(volatile const u64 *)IMG4_CHIP;
-    if (readable ((const char *)(chip + 8), 0) && readable ((const char *)(chip + 15), 0))
-      hex (g, " IMG4level=", *(volatile const u64 *)(chip + 8));
-  }
-}
-#endif
-
 /* x0 = fmt as for panic(); x1 is set by the stub to the entry stack pointer. */
-__attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main (const char *fmt, const u64 *args)
+__attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
+  (const char *fmt, const u64 *args, u64 caller_x20, u64 caller_x23, u64 caller_x25, u64 caller_x27)
 {
   volatile struct vc_info *v = (volatile struct vc_info *)VINFO;
   struct ctx g;
@@ -288,7 +258,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     g.log = (u8 *)PANIC_TEXT;
   }
   #ifdef FUXI_IMAGE4_DIAG
-  text (&g, "FIX056 diagnostics\n");
+  text (&g, "FIX057 diagnostics\n");
   /* Keep this optional renderer within the existing verified text padding.
    * The literal format and first argument slots are diagnostic data, labelled
    * explicitly, instead of pulling in the full printf parser. */
@@ -298,13 +268,18 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   hex (&g, " arg1=", args[1]);
   hex (&g, "\nLR=", caller);
   hex (&g, " earlyAllow=", early_allow);
+  hex (&g, "\nx20=", caller_x20);
+  hex (&g, " x23=", caller_x23);
+  hex (&g, "\nx25=", caller_x25);
+  hex (&g, " x27=", caller_x27);
+  if (readable ((const char *)caller_x27, 0) && readable ((const char *)(caller_x27 + 0x37), 0)) {
+    hex (&g, "\nx27[0]=", *(volatile const u64 *)caller_x27);
+    hex (&g, " x27[30]=", *(volatile const u64 *)(caller_x27 + 0x30));
+  }
   #else
   format (&g, fmt, args);
   #endif
   g.log = 0;
-  #ifdef FUXI_IMAGE4_DIAG
-  image4_diagnostic (&g);
-  #endif
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
@@ -332,7 +307,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
 /* Entry from panic(): keep the stack pointer, which addresses the variadic arguments. */
 __attribute__((naked, noreturn, section(".text.a_entry"))) void panic_screen (const char *fmt)
 {
-  __asm__ volatile ("mov x1, sp\n\tb panic_screen_main");
+  __asm__ volatile ("mov x1, sp\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tb panic_screen_main");
 }
 
 /* The real panic_trap_to_debugger signature takes (fmt, va_list *, ...).
@@ -342,7 +317,7 @@ __attribute__((naked, noreturn, section(".text.a_entry"))) void panic_screen (co
  */
 __attribute__((naked, noreturn, section(".text.a_common"))) void panic_screen_common (void)
 {
-  __asm__ volatile ("ldr x1, [x1]\n\tb panic_screen_main");
+  __asm__ volatile ("ldr x1, [x1]\n\tmov x2, x20\n\tmov x3, x23\n\tmov x4, x25\n\tmov x5, x27\n\tb panic_screen_main");
 }
 
 #include "Font.h"
