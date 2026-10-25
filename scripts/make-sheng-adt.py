@@ -154,6 +154,13 @@ def main():
                         # Image4 hash algorithm. The target iPad's DT specifies sha2-384 in /chosen; this
                         # selects the algorithm only and asserts nothing about Apple silicon or fuses.
                         ('crypto-hash-method', b'sha2-384\0'),
+                        # iOS 16 AppleImage4 requires this 32-bit /chosen policy;
+                        # absence returns ENOENT (2) and panics during init.
+                        # This source-XNU bring-up combines independently built
+                        # components, so mix-and-match prevention is explicitly
+                        # off. This is software policy, not an Apple fuse claim.
+                        *([('mix-n-match-prevention-status', struct.pack('<I', 0))]
+                          if args.iphone_identity else []),
                         *( [('root-matching', ('<dict><key>IOProviderClass</key><string>IOMedia</string>'
                                                '<key>IOPropertyMatch</key><dict><key>UUID</key><string>' +
                                                args.root_match_volume_uuid.upper() + '</string></dict></dict>\0').encode())]
