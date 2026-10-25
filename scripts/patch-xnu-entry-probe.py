@@ -170,7 +170,7 @@ def find_call(data, symbols, function, name, occurrence):
     return hits[occurrence - 1]
 
 
-def assemble_c(source, va, workdir, symbols):
+def assemble_c(source, va, workdir, symbols, kernel_data=None):
     """Build a freestanding C file for VA; returns (bytes, load address of the first byte, address of panic_screen).
 
     The linker may start .text a little after VA (it keeps the ELF headers in front), so the
@@ -183,6 +183,22 @@ def assemble_c(source, va, workdir, symbols):
     font_dir = Path(os.environ.get('UNIXNU_UEFI') or ROOT / 'uefi-sheng') / 'Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib'
     obj, elf, binary = (workdir / name for name in ('panic.o', 'panic.elf', 'panic.bin'))
     definitions = []
+    if os.environ.get('UNIXNU_FUXI_IMAGE4_DIAG') == '1':
+        # This diagnostic is specific to the audited iPhone X 20H392 Image4
+        # at slide -0x1000000. Guard the code that reads the sampled state.
+        at = file_offset(0xfffffff0046e9afc)
+        if kernel_data is None or kernel_data[at:at + 12] != bytes.fromhex('08ae00f008c17b3908230034'):
+            raise SystemExit('Image4 diagnostic layout differs from pinned 20H392')
+        for macro, name in [('DT_LOOKUP', '_SecureDTLookupEntry'), ('DT_PROPERTY', '_SecureDTGetProperty')]:
+            address = symbols.get(name)
+            if address is None:
+                raise SystemExit(f'Missing diagnostic function {name}')
+            file_offset(address)
+            definitions.append(f'-D{macro}={address:#x}UL')
+        for macro, address in [('IMG4_ALLOW', 0xfffffff005cacef0), ('IMG4_CHIP', 0xfffffff005cacec0)]:
+            file_offset(address)
+            definitions.append(f'-D{macro}={address:#x}UL')
+        definitions.append('-DFUXI_IMAGE4_DIAG=1')
     for macro, name, width in (('MAX_MEM', '_max_mem', 8),
                                ('PAGE_TOTAL', '_vm_page_pages', 4),
                                ('PAGE_FREE', '_vm_page_free_count', 4)):
@@ -406,7 +422,7 @@ def main():
         if word(PANIC_VA) in (0, 0xFFFFFFFF) or any(data[file_offset(PANIC_CAVE):file_offset(PANIC_CAVE_END)]):
             raise SystemExit('panic() or the panic screen padding is not as expected')
         with tempfile.TemporaryDirectory() as tmp:
-            code, load, entry = assemble_c(ROOT / 'scripts/xnu-panic-screen.c', PANIC_CAVE, Path(tmp), kernel_names)
+            code, load, entry = assemble_c(ROOT / 'scripts/xnu-panic-screen.c', PANIC_CAVE, Path(tmp), kernel_names, data)
             common_entry = panic_common_entry(Path(tmp), code, load)
         if load + len(code) > PANIC_CAVE_END:
             raise SystemExit(f'panic screen is {len(code):#x} bytes at {load:#x}, the padding ends at {PANIC_CAVE_END:#x}')
