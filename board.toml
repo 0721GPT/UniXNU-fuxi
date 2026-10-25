@@ -81,8 +81,7 @@ archives = [
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
 # when their feature is off. Without it the link stops on native_legacy_display_probe,
 # boot_progress_poll, the verified-root chain and mockfs.
-  # The prelinked com.apple.iokit.IOStorageFamily already publishes IOBlockStorageDevice;
-  # compiling the same sources again makes OSMetaClass panic on a duplicate class name.
+  "build-fuxi-io-storage.py",
   "build-fuxi-stub.py",
   "build-mockfs-fixture.py",
   "build-libpthread-kernel.py",
@@ -127,7 +126,6 @@ roots = [
   "com.apple.iokit.IOMobileGraphicsFamily",
   "com.apple.iokit.IOReportFamily",
   "com.apple.iokit.IOSlowAdaptiveClockingFamily",
-  "com.apple.iokit.IOStorageFamily",
   "com.apple.iokit.IOSurface",
   "com.apple.kec.Libm",
   "com.apple.kext.AppleMatch",
