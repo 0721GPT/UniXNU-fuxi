@@ -172,7 +172,14 @@ def main():
              [node('memory-map', ([("PackedRAMDisk" if args.packed_data_ramdisk else "RAMDisk", bytes(16))] if (args.data_ramdisk or args.packed_data_ramdisk) else []) +
                                  ([('TrustCache', bytes(16))] if args.trust_cache else [])),
               # Read by the original AppleImage4 at start-up; present and empty here.
-              node('manifest-properties')]),
+              node('manifest-properties'),
+              # The pinned iOS 16 AppleImage4 selects its existing reduced-
+              # security AP when exactly lp-smb0 is present in /chosen/asmb.
+              # A source-XNU test boot has no Apple previous-stage BNCH input;
+              # full-security AP would panic on that absence. Declare the test
+              # policy explicitly instead of manufacturing a nonce hash.
+              *([node('asmb', [('lp-smb0', struct.pack('<I', 1))])]
+                if args.iphone_identity else [])]),
         node('cpus', children=cpus),
         *([node('psci', [('compatible', b'arm,psci-1.0\0'), ('method', args.psci_method.encode() + b'\0')])] if len(cpus) > 1 else []),
         # Suspend/resume is not implemented for this board. Use the original
