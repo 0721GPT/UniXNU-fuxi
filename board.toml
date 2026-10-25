@@ -48,7 +48,6 @@ defconfig = "fuxi_defconfig"
 # Bring-up list. Dropped from the sheng set:
 #   build-sheng-platform-power.py        sheng PMGR power domains, no fuxi port
 #   build-arm-driver.py NativeVirtioBlock + the two build-native-virtio-bindings.py steps
-#   build-mockfs-fixture.py is kept: it only recompiles XNU's own bsd/miscfs/mockfs sources
 #                                        from the vfs_conf.o.json compile record, no audit involved.
 #   the two build-native-virtio-bindings.py steps need build/storage-abi/interface-audit.json,
 #                                        which only scripts/audit-storage-interface.py writes,
@@ -84,7 +83,6 @@ archives = [
 # boot_progress_poll, the verified-root chain and mockfs.
   "build-fuxi-io-storage.py",
   "build-fuxi-stub.py",
-  "build-mockfs-fixture.py",
   "build-libpthread-kernel.py",
 ]
 
