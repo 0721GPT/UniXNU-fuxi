@@ -84,6 +84,8 @@ archives = [
 # boot_progress_poll, the verified-root chain and mockfs.
   "build-fuxi-stub.py",
   "build-mockfs-fixture.py",
+  # Bounded, no-MMIO service publication test for this exact iPhone10,3 cache.
+  "build-fuxi-platform-power.py",
   "build-libpthread-kernel.py",
 ]
 
@@ -197,6 +199,7 @@ kernel_args = [
   "offline-mobile-graphics-load=1",
   "offline-apfs-load=1",
   "boot-progress=2",
+  "sheng-pmgr=2",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
   "armcpu-diagnostics=1",
@@ -205,11 +208,8 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",
 ]
 
-# native-ufs-root=1 is left out for the first boot. The payload builder requires a
-# PMGR driver for it ("native UFS root boot needs exactly one sheng-pmgr=2; the
-# unchanged target AMFI otherwise panics with No PMGR"), and the only PMGR archive in
-# the tree is sheng's board table, which we removed with the other sheng drivers.
-# Without a root device XNU still boots far enough to print its console banner.
+# native-ufs-root=1 stays off. The guarded iPhone10,3 PMGR probe tests whether
+# the original nub can be published for AMFI; it supplies no UFS or power backend.
 
 [payload.adt]
 tool = "scripts/make-sheng-adt.py"
