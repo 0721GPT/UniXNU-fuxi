@@ -83,6 +83,7 @@ archives = [
 # boot_progress_poll, the verified-root chain and mockfs.
   "build-fuxi-io-storage.py",
   "build-fuxi-stub.py",
+  "build-mockfs-fixture.py",
   "build-libpthread-kernel.py",
 ]
 
