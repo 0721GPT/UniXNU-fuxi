@@ -251,6 +251,11 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   volatile struct vc_info *v = (volatile struct vc_info *)VINFO;
   struct ctx g;
   u32 row, col;
+  #ifdef FUXI_IMAGE4_DIAG
+  /* Sample before painting or calling SecureDT; later values are printed too. */
+  u64 early_allow = readable ((const char *)IMG4_ALLOW, 0) ? *(volatile const u8 *)IMG4_ALLOW : 0xff;
+  u64 caller = (u64)__builtin_return_address (0);
+  #endif
 
   __asm__ volatile ("msr daifset, #15");
   g.base = (u8 *)v->v_baseaddr;
@@ -283,7 +288,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
     g.log = (u8 *)PANIC_TEXT;
   }
   #ifdef FUXI_IMAGE4_DIAG
-  text (&g, "FIX055 diagnostics\n");
+  text (&g, "FIX056 diagnostics\n");
   /* Keep this optional renderer within the existing verified text padding.
    * The literal format and first argument slots are diagnostic data, labelled
    * explicitly, instead of pulling in the full printf parser. */
@@ -291,6 +296,8 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   text (&g, fmt);
   hex (&g, "\narg0=", args[0]);
   hex (&g, " arg1=", args[1]);
+  hex (&g, "\nLR=", caller);
+  hex (&g, " earlyAllow=", early_allow);
   #else
   format (&g, fmt, args);
   #endif
