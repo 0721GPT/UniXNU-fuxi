@@ -284,8 +284,16 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   }
   #ifdef FUXI_IMAGE4_DIAG
   text (&g, "FIX055 diagnostics\n");
-  #endif
+  /* Keep this optional renderer within the existing verified text padding.
+   * The literal format and first argument slots are diagnostic data, labelled
+   * explicitly, instead of pulling in the full printf parser. */
+  text (&g, "panic format: ");
+  text (&g, fmt);
+  hex (&g, "\narg0=", args[0]);
+  hex (&g, " arg1=", args[1]);
+  #else
   format (&g, fmt, args);
+  #endif
   g.log = 0;
   #ifdef FUXI_IMAGE4_DIAG
   image4_diagnostic (&g);
@@ -293,6 +301,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
+  #ifndef FUXI_IMAGE4_DIAG
   {
     u64 tcr, sctlr;
     __asm__ volatile ("mrs %0, tcr_el1" : "=r" (tcr));
@@ -305,6 +314,7 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main 
   (void)MAX_MEM;
   hex (&g, "\npages=", *(volatile const u32 *)PAGE_TOTAL);
   hex (&g, "\nfree=", *(volatile const u32 *)PAGE_FREE);
+  #endif
   /* The raw argument slots are not dumped: the formatted message above already carries them (room for the PANIC_TEXT copy). */
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
