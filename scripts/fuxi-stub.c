@@ -41,8 +41,10 @@ FUXI_WEAK const unsigned char mockfs_vnodeop_opv_desc[512] = { 0 };
  * The prelink needs a native address for it because an original kext references it,
  * and this kernel build has no iokitcpp objects. Nothing on the bring-up path drives
  * a DriverKit user server, so a NULL-returning stub only has to satisfy the rebind.
+ * It is deliberately strong: NativePrelink resolves original kext bindings only
+ * against symbols preserved in the final candidate kernel.
  */
-FUXI_WEAK void *IORPCMessageFromMach(void *message, int reply)
+void *IORPCMessageFromMach(void *message, int reply)
 {
 	(void)message; (void)reply;
 	return 0;
