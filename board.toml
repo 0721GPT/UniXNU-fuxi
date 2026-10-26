@@ -84,7 +84,7 @@ archives = [
   # LUN 0, validates the GPT, finds the userdata entry and inspects its first
   # block.  Root publication remains disabled until this hardware checkpoint
   # proves the fuxi controller/SMMU hand-off and the flashed SHNGROOT manifest.
-  "build-arm-driver.py NativeUfs",
+  "build-fuxi-ufs.py",
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
 # when their feature is off. Without it the link stops on native_legacy_display_probe,
 # boot_progress_poll, the verified-root chain and mockfs.

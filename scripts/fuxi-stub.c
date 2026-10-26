@@ -53,7 +53,11 @@ void *IORPCMessageFromMach(void *message, int reply)
 /* --- boot progress weak imports (generated) --------------------------------- */
 /* BootProgress.c weak-imports its counters and row buffers; the kernel link wants
  * definitions. Zeroed weak definitions are enough: the layer only displays them. */
-FUXI_WEAK unsigned long boot_log_tick;
+FUXI_WEAK void boot_log_tick(unsigned tick) { (void)tick; }
+FUXI_WEAK unsigned int boot_log_state;
+FUXI_WEAK unsigned int boot_log_rounds;
+FUXI_WEAK unsigned int boot_log_errors;
+FUXI_WEAK unsigned long long boot_log_first_lba;
 FUXI_WEAK unsigned long boot_process_attempts;
 FUXI_WEAK unsigned long boot_process_busy;
 FUXI_WEAK unsigned long boot_process_capture;
