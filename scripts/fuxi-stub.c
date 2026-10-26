@@ -177,7 +177,6 @@ FUXI_WEAK unsigned long boot_diag_files;
 FUXI_WEAK unsigned long boot_diag_scan;
 FUXI_WEAK unsigned long boot_diag_skipped;
 FUXI_WEAK unsigned long boot_diag_stream;
-FUXI_WEAK unsigned long boot_log_tick;
 FUXI_WEAK unsigned long boot_process_attempts;
 FUXI_WEAK unsigned long boot_process_busy;
 FUXI_WEAK unsigned long boot_process_capture;
