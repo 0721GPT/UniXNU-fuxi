@@ -183,6 +183,21 @@ def assemble_c(source, va, workdir, symbols, kernel_data=None):
     font_dir = Path(os.environ.get('UNIXNU_UEFI') or ROOT / 'uefi-sheng') / 'Silicon/Silicium/SiliciumPkg/Library/FrameBufferSerialPortLib'
     obj, elf, binary = (workdir / name for name in ('panic.o', 'panic.elf', 'panic.bin'))
     definitions = []
+    # An embedded USB backend must see panics even when this framebuffer
+    # renderer replaces the ordinary XNU panic funnel in the payload copy.
+    usb_hooks = {'QCOM_USB_PUTC': '_qcom_usb_debug_putc',
+                 'QCOM_USB_PANIC_PREPARE': '_qcom_usb_debug_panic_prepare',
+                 'QCOM_USB_PANIC_DRAIN': '_qcom_usb_debug_panic_drain',
+                 'QCOM_USB_GET_STATUS': '_qcom_usb_debug_get_status'}
+    if all(name in symbols for name in usb_hooks.values()):
+        include = ROOT / '.cache/fuxi-qud-module/include'
+        if not (include / 'QcomXnuUsbDebug.h').is_file():
+            raise SystemExit('USB panic hooks require the matching public header')
+        definitions.append('-I' + str(include))
+        for macro, name in usb_hooks.items():
+            address = symbols[name]
+            file_offset(address)
+            definitions.append(f'-D{macro}={address:#x}UL')
     if os.environ.get('UNIXNU_FUXI_IMAGE4_DIAG') == '1':
         # This diagnostic is specific to the audited iPhone X 20H392 Image4
         # at slide -0x1000000. Guard the code that reads the sampled state.

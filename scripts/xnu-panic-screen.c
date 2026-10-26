@@ -17,6 +17,10 @@ typedef unsigned long u64;
 typedef unsigned int u32;
 typedef unsigned char u8;
 
+#ifdef QCOM_USB_PUTC
+#include <QcomXnuUsbDebug.h>
+#endif
+
 struct vc_info {
   u32 v_height, v_width, v_depth, v_rowbytes;
   u64 v_baseaddr;
@@ -51,6 +55,10 @@ static void put (struct ctx *g, u8 c)
 {
   const u32 cell = 6 * SCALE, line = 14 * SCALE;
   u32 row, col, dy, dx;
+
+  #ifdef QCOM_USB_PUTC
+  ((void (*)(char))QCOM_USB_PUTC)((char)c);
+  #endif
 
   if (g->log && g->logn < PANIC_TEXT_BYTES - 1 && c >= 9 && c <= 126) {
     g->log[g->logn++] = (c < 32) ? ' ' : c;
@@ -229,6 +237,9 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   #endif
 
   __asm__ volatile ("msr daifset, #15");
+  #ifdef QCOM_USB_PANIC_PREPARE
+  ((void (*)(void))QCOM_USB_PANIC_PREPARE)();
+  #endif
   g.base = (u8 *)v->v_baseaddr;
   g.rb   = v->v_rowbytes;
   g.w    = v->v_width;
@@ -279,6 +290,16 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   format (&g, fmt, args);
   #endif
   g.log = 0;
+  #ifdef QCOM_USB_GET_STATUS
+  {
+    struct qcom_usb_debug_status usb = {0};
+    ((void (*)(struct qcom_usb_debug_status *))QCOM_USB_GET_STATUS)(&usb);
+    hex (&g, "\nUSBphase=", usb.phase);
+    hex (&g, " error=", usb.error);
+    hex (&g, "\nUSBdomain=", usb.domain_result);
+    hex (&g, " stage=", usb.domain_stage);
+  }
+  #endif
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
@@ -300,6 +321,9 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   mark[0] = 0xC0FFEE11u;
   mark[1] = 0x5CEEDA7Au;
   __asm__ volatile ("dsb sy");
+  #ifdef QCOM_USB_PANIC_DRAIN
+  ((void (*)(void))QCOM_USB_PANIC_DRAIN)();
+  #endif
   park ();
 }
 

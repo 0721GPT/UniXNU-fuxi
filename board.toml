@@ -85,6 +85,7 @@ archives = [
   # block.  Root publication remains disabled until this hardware checkpoint
   # proves the fuxi controller/SMMU hand-off and the flashed SHNGROOT manifest.
   "build-fuxi-ufs.py",
+  "build-fuxi-usb-debug.py",
 # build-fuxi-stub.py defines, weakly, the native symbols the XNU patches reference even
 # when their feature is off. Without it the link stops on native_legacy_display_probe,
 # boot_progress_poll, the verified-root chain and mockfs.
@@ -178,7 +179,7 @@ BUILDID_STRING = "fuxi-research"
 volume = "FUXIESP"
 size_mib = 192
 loader = "firmware"
-title = "FUXI FIX061 UFS READONLY"
+title = "FUXI FIX063 USB DEBUG TEST"
 dram_size = "0x80000000"             # SMEM RAM table, SM8550 is shared with sheng
 panic_screen = true
 # The original static/System trust caches of the same IPSW.
@@ -204,10 +205,11 @@ kernel_args = [
   "offline-mobile-graphics-client=1",
   "offline-mobile-graphics-load=1",
   "offline-apfs-load=1",
-  "boot-progress=2",
   "sheng-pmgr=2",
-  "native-ufs-probe=10",
+  "native-fuxi-ufs-root=1",
   "native-ufs-diagnostics=1",
+  "qcom-usb-debug=1",
+  "-enable_kprintf_spam",
   "-apfs_shared_datavolume",
   "offline-key-events=1",
   "armcpu-diagnostics=1",
@@ -216,9 +218,9 @@ kernel_args = [
   "ml-timeout-lock-panic-scale=40",
 ]
 
-# native-ufs-root=1 stays off in FIX061.  probe=10 always stops with a bounded
-# diagnostic panic after the read-only controller/GPT/manifest check; it never
-# publishes writable media and never writes to UFS.
+# FIX063 retains the observed FIX062 read-only root publication path and adds
+# a USB log transport. Root authentication is still enforced by XNU. Remote
+# USB control/reset and persistent UFS writes are not enabled.
 
 [payload.adt]
 tool = "scripts/make-sheng-adt.py"
