@@ -25,7 +25,8 @@ def stage(module, xnu, output):
         return subprocess.check_output(['git', '-C', str(path), *args], text=True).strip()
     if git(module, 'rev-parse', 'HEAD') != QUD_REVISION or git(xnu, 'rev-parse', 'HEAD') != XNU_REVISION:
         raise ValueError('unexpected module/XNU source revision')
-    signature = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    takeover_patch = Path(__file__).with_name('fuxi-usb-exact-stream.patch')
+    signature = hashlib.sha256(Path(__file__).read_bytes() + takeover_patch.read_bytes()).hexdigest()
     record = output / 'fuxi-stage.json'
     if record.is_file():
         if json.loads(record.read_text())['adapter_sha256'] != signature:
@@ -46,7 +47,10 @@ def stage(module, xnu, output):
 #define QUD_USB_PRODUCT "Xiaomi 13 XNU Debug"
 #undef QUD_PSCI_SMC_RESET
 #define QUD_PSCI_SMC_RESET 0
+#define QUD_ALLOW_EXACT_STREAM_TAKEOVER 1
 ''')
+    subprocess.run(['git', 'apply', '--check', str(takeover_patch)], cwd=output, check=True)
+    subprocess.run(['git', 'apply', str(takeover_patch)], cwd=output, check=True)
     original_patch = (module / 'patches/darwin22/0001-qcom-usb-debug-console.patch').read_text()
     # Three files retain their reviewed upstream hooks verbatim. Darwin23 moved
     # disableConsoleOutput checks into the central console accessors; tee raw
@@ -111,7 +115,9 @@ def stage(module, xnu, output):
     path.write_text(text)
     record.write_text(json.dumps(dict(module_revision=QUD_REVISION, xnu_revision=XNU_REVISION,
                      adapter_sha256=signature, profile=PROFILE, reset_qualified=False,
-                     cold_initialization=False, hardware_verified=False), indent=2) + '\n')
+                     cold_initialization=False, hardware_verified=False,
+                     exact_stream_takeover=True,
+                     takeover_patch_sha256=hashlib.sha256(takeover_patch.read_bytes()).hexdigest()), indent=2) + '\n')
 
 
 if __name__ == '__main__':

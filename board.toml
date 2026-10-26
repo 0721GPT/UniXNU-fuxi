@@ -179,7 +179,7 @@ BUILDID_STRING = "fuxi-research"
 volume = "FUXIESP"
 size_mib = 192
 loader = "firmware"
-title = "FUXI FIX063 USB DEBUG TEST"
+title = "FUXI FIX065 USB STREAM TEST"
 dram_size = "0x80000000"             # SMEM RAM table, SM8550 is shared with sheng
 panic_screen = true
 # The original static/System trust caches of the same IPSW.
