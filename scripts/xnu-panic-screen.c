@@ -60,10 +60,12 @@ static void put (struct ctx *g, u8 c)
   ((void (*)(char))QCOM_USB_PUTC)((char)c);
   #endif
 
+  #ifndef QCOM_USB_PUTC
   if (g->log && g->logn < PANIC_TEXT_BYTES - 1 && c >= 9 && c <= 126) {
     g->log[g->logn++] = (c < 32) ? ' ' : c;
     g->log[g->logn] = 0;
   }
+  #endif
 
   if (c == '\n') {
     g->x = 0;
@@ -266,9 +268,11 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   g.y += 8;
   /* The board's live banner keeps showing this text after the next swap paints over the screen (BootProgress.c,
    * boot_progress_panic_text). The first panic's text is kept: a buffer that already holds one is left alone. */
+  #ifndef QCOM_USB_PUTC
   if (PANIC_TEXT && *(volatile u8 *)PANIC_TEXT == 0) {
     g.log = (u8 *)PANIC_TEXT;
   }
+  #endif
   #ifdef FUXI_IMAGE4_DIAG
   text (&g, "FIX058 diagnostics\n");
   /* Keep this optional renderer within the existing verified text padding.
