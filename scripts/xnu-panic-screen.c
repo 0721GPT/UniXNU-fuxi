@@ -292,7 +292,12 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   g.log = 0;
   #ifdef QCOM_USB_GET_STATUS
   {
-    struct qcom_usb_debug_status usb = {0};
+    /* This renderer is a freestanding ELF island, without a C runtime.
+     * Volatile byte stores prevent aggregate initialization becoming memset.
+     * The getter can refuse a contended lock, so initialize every byte. */
+    struct qcom_usb_debug_status usb;
+    volatile u8 *usb_bytes = (volatile u8 *)&usb;
+    for (u32 i = 0; i < sizeof(usb); i++) usb_bytes[i] = 0;
     ((void (*)(struct qcom_usb_debug_status *))QCOM_USB_GET_STATUS)(&usb);
     hex (&g, "\nUSBphase=", usb.phase);
     hex (&g, " error=", usb.error);
