@@ -292,23 +292,22 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
   g.log = 0;
   #ifdef QCOM_USB_GET_STATUS
   {
-    /* This renderer is a freestanding ELF island, without a C runtime.
-     * Volatile byte stores prevent aggregate initialization becoming memset.
-     * The getter can refuse a contended lock, so initialize every byte. */
+    /* The getter can refuse a contended lock. Seed just the two fields read
+     * here; UINT32_MAX means unavailable. No aggregate init/runtime memset. */
     struct qcom_usb_debug_status usb;
-    volatile u8 *usb_bytes = (volatile u8 *)&usb;
-    for (u32 i = 0; i < sizeof(usb); i++) usb_bytes[i] = 0;
+    usb.phase = usb.error = 0xffffffffu;
     ((void (*)(struct qcom_usb_debug_status *))QCOM_USB_GET_STATUS)(&usb);
-    hex (&g, "\nUSBphase=", usb.phase);
-    hex (&g, " error=", usb.error);
-    hex (&g, "\nUSBdomain=", usb.domain_result);
-    hex (&g, " stage=", usb.domain_stage);
+    /* Upper 32 bits are phase, lower 32 bits error. One compact field keeps
+     * the full panic formatter and both entry ABIs inside the fixed cave. */
+    hex (&g, "\nUSB phase/error=", ((u64)usb.phase << 32) | usb.error);
   }
   #endif
   __asm__ volatile ("dsb sy");
   /* Sample the active CPU translation regime, without changing it. This is
    * panic-time evidence only; it does not establish early mappings or EL0 ABI. */
-  #ifndef FUXI_IMAGE4_DIAG
+  /* Keep the USB build inside the same verified text padding: its transport
+   * status replaces the secondary VM/register footer, never the panic text. */
+  #if !defined(FUXI_IMAGE4_DIAG) && !defined(QCOM_USB_GET_STATUS)
   {
     u64 tcr, sctlr;
     __asm__ volatile ("mrs %0, tcr_el1" : "=r" (tcr));
