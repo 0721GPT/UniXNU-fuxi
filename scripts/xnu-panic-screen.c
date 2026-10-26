@@ -299,11 +299,13 @@ __attribute__((noreturn, used, section(".text.b_main"))) void panic_screen_main
     /* The getter can refuse a contended lock. Seed just the two fields read
      * here; UINT32_MAX means unavailable. No aggregate init/runtime memset. */
     struct qcom_usb_debug_status usb;
-    usb.phase = usb.error = 0xffffffffu;
+    usb.domain_result = usb.domain_stage = 0xffffffffu;
     ((void (*)(struct qcom_usb_debug_status *))QCOM_USB_GET_STATUS)(&usb);
-    /* Upper 32 bits are phase, lower 32 bits error. One compact field keeps
+    /* FIX064: upper 32 bits are domain result, lower 32 bits domain stage.
+     * FIX063 already established REFUSED / DMA_REFUSED on this hardware.
+     * One compact field keeps
      * the full panic formatter and both entry ABIs inside the fixed cave. */
-    hex (&g, "\nUSB phase/error=", ((u64)usb.phase << 32) | usb.error);
+    hex (&g, "\nUSB DMA=", ((u64)usb.domain_result << 32) | usb.domain_stage);
   }
   #endif
   __asm__ volatile ("dsb sy");
